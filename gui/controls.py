@@ -20,6 +20,8 @@ class OscilloscopeControls(QWidget):
     # ================================================================
 
     time_per_division_changed = Signal(float)
+    horizontal_position_changed = Signal(float)
+
     volts_per_division_changed = Signal(float)
     vertical_position_changed = Signal(float)
 
@@ -53,20 +55,13 @@ class OscilloscopeControls(QWidget):
         self.trigger_controls = TriggerControls()
         self.acquisition_controls = AcquisitionControls()
 
-        # ------------------------------------------------------------
-        # FILA SUPERIOR: ADQUISICIÓN
-        # Ocupa las tres columnas.
-        # ------------------------------------------------------------
-
+        # Fila superior: adquisición.
         layout.addWidget(
             self.acquisition_controls,
             0, 0, 1, 3,
         )
 
-        # ------------------------------------------------------------
-        # FILA INFERIOR: VERTICAL / HORIZONTAL / TRIGGER
-        # ------------------------------------------------------------
-
+        # Segunda fila: vertical, horizontal y trigger.
         layout.addWidget(self.ch1_controls, 1, 0)
         layout.addWidget(self.horizontal_controls, 1, 1)
         layout.addWidget(self.trigger_controls, 1, 2)
@@ -85,10 +80,9 @@ class OscilloscopeControls(QWidget):
                 QSizePolicy.Policy.Preferred,
             )
 
-            # Los controles quedan arriba dentro de cada sección.
+            # Mantiene los controles arriba en cada sección.
             panel.layout().addStretch()
 
-        # Las tres columnas comparten el ancho disponible.
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(2, 1)
@@ -101,6 +95,7 @@ class OscilloscopeControls(QWidget):
     # ================================================================
 
     def connect_signals(self):
+        # Control vertical.
         self.ch1_controls.volts_per_division_changed.connect(
             self.volts_per_division_changed.emit
         )
@@ -109,10 +104,16 @@ class OscilloscopeControls(QWidget):
             self.vertical_position_changed.emit
         )
 
+        # Control horizontal.
         self.horizontal_controls.time_per_division_changed.connect(
             self.time_per_division_changed.emit
         )
 
+        self.horizontal_controls.position_changed.connect(
+            self.horizontal_position_changed.emit
+        )
+
+        # Trigger.
         self.trigger_controls.level_changed.connect(
             self.trigger_level_changed.emit
         )
@@ -125,6 +126,7 @@ class OscilloscopeControls(QWidget):
             self.trigger_mode_changed.emit
         )
 
+        # Adquisición.
         self.acquisition_controls.run_stop_clicked.connect(
             self.run_stop_clicked.emit
         )
@@ -139,6 +141,9 @@ class OscilloscopeControls(QWidget):
 
     def set_time_per_division(self, value):
         self.horizontal_controls.set_time_per_division(value)
+
+    def set_horizontal_position(self, divisions):
+        self.horizontal_controls.set_position(divisions)
 
     def set_volts_per_division(self, value):
         self.ch1_controls.set_volts_per_division(value)
@@ -155,9 +160,26 @@ class OscilloscopeControls(QWidget):
     def set_trigger_mode(self, value):
         self.trigger_controls.set_mode(value)
 
+    def set_trigger_range(self, minimum, maximum):
+        self.trigger_controls.set_level_range(
+            minimum,
+            maximum,
+        )
+
     def sync_settings(self, settings):
-        self.set_time_per_division(settings.time_per_division)
-        self.set_volts_per_division(settings.volts_per_division)
+        """Refleja el estado del controlador en todos los paneles."""
+
+        self.set_time_per_division(
+            settings.time_per_division
+        )
+
+        self.set_horizontal_position(
+            settings.horizontal_position_divisions
+        )
+
+        self.set_volts_per_division(
+            settings.volts_per_division
+        )
 
         self.set_vertical_position(
             settings.vertical_position_divisions
@@ -166,6 +188,10 @@ class OscilloscopeControls(QWidget):
         self.set_trigger_level(settings.trigger_level)
         self.set_trigger_slope(settings.trigger_slope)
         self.set_trigger_mode(settings.trigger_mode)
+
+    # ================================================================
+    # ESTADO DE ADQUISICIÓN
+    # ================================================================
 
     def show_state(self, running, status, error=None):
         self.acquisition_controls.show_state(
@@ -178,7 +204,7 @@ class OscilloscopeControls(QWidget):
         self.acquisition_controls.set_actions_enabled(enabled)
 
     # ================================================================
-    # COMPATIBILIDAD CON EL WIDGET ACTUAL
+    # ACCESO A BOTONES DESDE EL WIDGET
     # ================================================================
 
     @property

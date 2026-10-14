@@ -1,19 +1,18 @@
-"""Integra adquisición, procesamiento, gráfico y controles."""
+"""Integra adquisición, gráfico y controles del osciloscopio."""
 
 from threading import Lock
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Slot, Qt, QSignalBlocker
-
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtWidgets import (
     QApplication,
-    QWidget,
     QHBoxLayout,
-    QVBoxLayout,
+    QLabel,
     QScrollArea,
     QSlider,
-    QLabel,
+    QVBoxLayout,
+    QWidget,
 )
 
 from acquisition.audio_input import AudioInput
@@ -30,7 +29,7 @@ class OscilloscopeWidget(QWidget):
         super().__init__(parent)
 
         # ============================================================
-        # CONFIGURACIÓN DE ADQUISICIÓN
+        # ADQUISICIÓN
         # ============================================================
 
         self.sample_rate = 48000
@@ -38,7 +37,7 @@ class OscilloscopeWidget(QWidget):
         self.channels = 1
 
         # ============================================================
-        # CONFIGURACIÓN DE PANTALLA
+        # PANTALLA Y ESCALAS
         # ============================================================
 
         self.horizontal_divisions = 12
@@ -47,24 +46,29 @@ class OscilloscopeWidget(QWidget):
         self.time_per_division = 0.001
         self.volts_per_division = 0.02
 
+        # Origen del eje temporal, en segundos.
         self.horizontal_position = 0.0
 
-        # Posición elegida por el usuario, expresada en divisiones.
+        # Posición del disparo respecto del centro, en divisiones.
+        self.horizontal_position_divisions = 0.0
+
+        # Posición vertical de la traza, en divisiones.
         self.vertical_position_divisions = 0.0
 
-        # Desplazamiento de los límites del eje Y, en unidades
-        # de la señal, utilizado por OscilloscopePlot.
+        # Desplazamiento del rango visible del eje Y, en voltios.
         self.vertical_offset = 0.0
-        self.vertical_position_divisions = 0.0
 
-        self.display_samples = int(
-            self.sample_rate
-            * self.time_per_division
-            * self.horizontal_divisions
+        self.display_samples = max(
+            2,
+            int(
+                self.sample_rate
+                * self.time_per_division
+                * self.horizontal_divisions
+            ),
         )
 
         # ============================================================
-        # CONFIGURACIÓN DEL TRIGGER
+        # TRIGGER
         # ============================================================
 
         self.trigger_level = 0.0
@@ -78,25 +82,26 @@ class OscilloscopeWidget(QWidget):
 
         self.running = True
         self.single_mode = False
-
-        self.last_acquisition = None
         self.trigger_found = False
+        self.last_acquisition = None
 
         self._closed = False
         self._audio_error = None
-
-        self._buffer_lock = Lock()
         self._new_data = False
 
+        self._buffer_lock = Lock()
+
+        # Copia de la última adquisición para cambiar el recorte
+        # horizontal incluso en STOP.
+        self._last_display_buffer = None
+        self._last_trigger_index = None
+        self._last_fractional_offset = 0.0
+
         # ============================================================
-        # BUFFER
+        # COMPONENTES
         # ============================================================
 
         self.buffer = AcquisitionBuffer(self.sample_rate)
-
-        # ============================================================
-        # ENTRADA DE AUDIO
-        # ============================================================
 
         self.audio = AudioInput(
             sample_rate=self.sample_rate,
@@ -104,19 +109,11 @@ class OscilloscopeWidget(QWidget):
             blocksize=self.blocksize,
         )
 
-        # ============================================================
-        # TRIGGER
-        # ============================================================
-
         self.trigger = Edge_Trigger(
             level=self.trigger_level,
             slope=self.trigger_slope,
             position=self.trigger_position,
         )
-
-        # ============================================================
-        # CONTROLES Y GRÁFICO
-        # ============================================================
 
         self.controls = OscilloscopeControls()
 
@@ -125,17 +122,50 @@ class OscilloscopeWidget(QWidget):
             vertical_divisions=self.vertical_divisions,
             time_per_division=self.time_per_division,
             volts_per_division=self.volts_per_division,
-            horizontal_position=self.horizontal_position,
-            vertical_offset=self.vertical_offset,
             trigger_level=self.trigger_level,
             trigger_position=self.trigger_position,
+            horizontal_position=self.horizontal_position,
+            vertical_offset=self.vertical_offset,
         )
 
-        # ============================================================
-        # BARRA LATERAL DE POSICIÓN
-        # ============================================================
+        self.create_interface()
+        self.connect_signals()
 
-        position_panel = QWidget()
+        # La interfaz se actualiza desde el hilo de Qt.
+        self.display_timer = QTimer(self)
+        self.display_timer.setInterval(40)
+        self.display_timer.timeout.connect(self.process_data)
+
+        self.controls.sync_settings(self)
+
+        self.set_vertical_position(
+            self.vertical_position_divisions
+        )
+
+        self.set_horizontal_position(
+            self.horizontal_position_divisions
+        )
+
+        self.update_controls_state()
+
+        app = QApplication.instance()
+
+        if app is not None:
+            app.aboutToQuit.connect(self.shutdown)
+
+        self.start_audio()
+
+    # ================================================================
+    # INTERFAZ
+    # ================================================================
+
+    def create_interface(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Barra lateral de posición vertical.
+        position_panel = QWidget(self)
         position_panel.setFixedWidth(48)
 
         position_layout = QVBoxLayout(position_panel)
@@ -143,23 +173,17 @@ class OscilloscopeWidget(QWidget):
         position_layout.setSpacing(6)
 
         channel_label = QLabel("CH1")
-        channel_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
+        channel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        channel_label.setStyleSheet(
+            "color: #e3c84b; font-weight: bold;"
         )
 
-        self.position_slider = QSlider(
-            Qt.Orientation.Vertical
-        )
-
+        self.position_slider = QSlider(Qt.Orientation.Vertical)
         self.position_slider.setRange(-400, 400)
         self.position_slider.setValue(0)
         self.position_slider.setSingleStep(10)
         self.position_slider.setPageStep(100)
         self.position_slider.setInvertedAppearance(False)
-
-        self.position_slider.setToolTip(
-            "Posición vertical de CH1: 0.00 div"
-        )
 
         self.position_slider.setStyleSheet("""
             QSlider::groove:vertical {
@@ -178,42 +202,37 @@ class OscilloscopeWidget(QWidget):
         """)
 
         position_layout.addWidget(channel_label)
-
         position_layout.addWidget(
             self.position_slider,
             1,
             Qt.AlignmentFlag.AlignHCenter,
         )
 
-        # ============================================================
-        # PANEL DERECHO
-        # ============================================================
-
-        self.controls_scroll = QScrollArea()
+        # Panel derecho de controles.
+        self.controls_scroll = QScrollArea(self)
         self.controls_scroll.setWidgetResizable(True)
         self.controls_scroll.setWidget(self.controls)
         self.controls_scroll.setFixedWidth(490)
 
-        # ============================================================
-        # DISTRIBUCIÓN GENERAL
-        # ============================================================
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
         layout.addWidget(position_panel)
         layout.addWidget(self.plot, 1)
-        layout.addWidget(self.controls_scroll, 0)
+        layout.addWidget(self.controls_scroll)
 
-        # ============================================================
-        # CONEXIONES DE CONTROLES
-        # ============================================================
+    # ================================================================
+    # CONEXIONES
+    # ================================================================
 
+    def connect_signals(self):
+        # Control horizontal.
         self.controls.time_per_division_changed.connect(
             self.set_time_per_division
         )
 
+        self.controls.horizontal_position_changed.connect(
+            self.set_horizontal_position
+        )
+
+        # Control vertical.
         self.controls.volts_per_division_changed.connect(
             self.set_volts_per_division
         )
@@ -223,11 +242,10 @@ class OscilloscopeWidget(QWidget):
         )
 
         self.position_slider.valueChanged.connect(
-            lambda value: self.set_vertical_position(
-                value / 100.0
-            )
+            self._on_position_slider_changed
         )
 
+        # Trigger desde el panel.
         self.controls.trigger_level_changed.connect(
             self.set_trigger_level
         )
@@ -240,6 +258,12 @@ class OscilloscopeWidget(QWidget):
             self.set_trigger_mode
         )
 
+        # Trigger desde el gráfico.
+        self.plot.trigger_level_changed.connect(
+            self.set_trigger_level
+        )
+
+        # Adquisición.
         self.controls.run_stop_clicked.connect(
             self.toggle_run_stop
         )
@@ -248,70 +272,37 @@ class OscilloscopeWidget(QWidget):
             self.single
         )
 
-        # ============================================================
-        # TEMPORIZADOR DE VISUALIZACIÓN
-        # ============================================================
+    # ================================================================
+    # AUDIO
+    # ================================================================
 
-        self.display_timer = QTimer(self)
-        self.display_timer.setInterval(40)
-        self.display_timer.timeout.connect(
-            self.process_oscilloscope
-        )
-
-        # ============================================================
-        # SINCRONIZACIÓN INICIAL
-        # ============================================================
-
-        self.controls.sync_settings(self)
-
-        self.set_vertical_position(
-            self.vertical_position_divisions
-        )
-
-        self.update_controls_state()
-
-        # Cerrar el audio al salir de la aplicación.
-        app = QApplication.instance()
-
-        if app is not None:
-            app.aboutToQuit.connect(self.shutdown)
-
-        # ============================================================
-        # INICIAR ADQUISICIÓN
-        # ============================================================
-
+    def start_audio(self):
         try:
             self.audio.start_stream(self.audio_callback)
 
         except Exception as error:
-            self.running = False
             self._audio_error = str(error)
+            self.running = False
 
-            self.controls.run_button.setEnabled(False)
-            self.controls.single_button.setEnabled(False)
-
+            self.controls.set_acquisition_enabled(False)
             self.update_controls_state()
 
         else:
             self.display_timer.start()
 
-    # ================================================================
-    # CALLBACK DE AUDIO
-    # ================================================================
-
     def audio_callback(self, data):
-        """Guarda muestras sin emitir señales ni llamar a Qt."""
+        """Guarda muestras sin acceder a los widgets."""
 
-        data_array = np.asarray(data, dtype=np.float32)
+        samples = np.asarray(data, dtype=np.float32)
 
-        if data_array.size == 0:
+        if samples.size == 0:
             return
 
         with self._buffer_lock:
             if self._closed:
                 return
 
-            self.buffer.add_samples(data_array)
+            self.buffer.add_samples(samples)
             self._new_data = True
 
     # ================================================================
@@ -319,7 +310,7 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     @Slot()
-    def process_oscilloscope(self):
+    def process_data(self):
         if self._closed or not self.running:
             return
 
@@ -327,7 +318,8 @@ class OscilloscopeWidget(QWidget):
             if not self._new_data:
                 return
 
-            data = self.buffer.get_data()
+            # Copia independiente del buffer de adquisición.
+            data = self.buffer.get_data().copy()
             self._new_data = False
 
         if len(data) < self.display_samples:
@@ -347,52 +339,105 @@ class OscilloscopeWidget(QWidget):
                 self.display_samples,
             )
 
-        # ------------------------------------------------------------
-        # NORMAL / SINGLE
-        # ------------------------------------------------------------
+        self.trigger_found = acquisition is not None
 
-        if self.trigger_mode in ("Normal", "Single"):
-            if acquisition is None:
-                self.trigger_found = False
+        if not self.trigger_found:
+            # Normal y Single conservan la última traza
+            # mientras esperan un disparo válido.
+            if self.trigger_mode in ("Normal", "Single"):
                 self.update_controls_state()
                 return
 
-            self.last_acquisition = acquisition
-            self.trigger_found = True
+            # Auto sin disparo.
+            self._last_display_buffer = data
+            self._last_trigger_index = None
+            self._last_fractional_offset = 0.0
 
-            self.plot.set_signal(
+            acquisition = data[-self.display_samples:].copy()
+            self._show_acquisition(acquisition)
+
+        else:
+            # Guarda el contexto del disparo para poder volver
+            # a recortar esta adquisición sin buscar otro cruce.
+            self._last_display_buffer = data
+            self._last_trigger_index = trigger_index
+            self._last_fractional_offset = (
+                self.trigger.fractional_offset
+            )
+
+            samples_before = int(
+                self.display_samples * self.trigger.position
+            )
+
+            trigger_sample = (
+                samples_before + self._last_fractional_offset
+            )
+
+            self._show_acquisition(
                 acquisition,
-                self.sample_rate,
+                trigger_sample=trigger_sample,
             )
 
             if self.trigger_mode == "Single":
                 self.running = False
 
-            self.update_controls_state()
-            return
+        self.update_controls_state()
 
-        # ------------------------------------------------------------
-        # AUTO
-        # ------------------------------------------------------------
-
-        if acquisition is not None:
-            self.trigger_found = True
-
-        else:
-            self.trigger_found = False
-            acquisition = data[-self.display_samples:].copy()
-
+    def _show_acquisition(self, acquisition, trigger_sample=None):
         self.last_acquisition = acquisition
 
         self.plot.set_signal(
             acquisition,
             self.sample_rate,
+            trigger_sample=trigger_sample,
         )
 
-        self.update_controls_state()
+    def _redraw_last_acquisition(self):
+        """Redibuja usando únicamente el buffer guardado."""
+
+        data = self._last_display_buffer
+
+        if data is None:
+            return
+
+        if self._last_trigger_index is not None:
+            acquisition = self.trigger.capture(
+                data,
+                self._last_trigger_index,
+                self.display_samples,
+            )
+
+            if acquisition is None:
+                self.last_acquisition = None
+                self.plot.clear_signal()
+                return
+
+            samples_before = int(
+                self.display_samples * self.trigger.position
+            )
+
+            trigger_sample = (
+                samples_before + self._last_fractional_offset
+            )
+
+            self._show_acquisition(
+                acquisition,
+                trigger_sample=trigger_sample,
+            )
+
+        else:
+            # Sin disparo no existe una referencia temporal
+            # para desplazar el recorte alrededor de un cruce.
+            if len(data) < self.display_samples:
+                self.last_acquisition = None
+                self.plot.clear_signal()
+                return
+
+            acquisition = data[-self.display_samples:].copy()
+            self._show_acquisition(acquisition)
 
     # ================================================================
-    # ESTADO DEL PANEL
+    # ESTADO
     # ================================================================
 
     def update_controls_state(self):
@@ -410,23 +455,28 @@ class OscilloscopeWidget(QWidget):
         elif self.trigger_mode == "Single":
             status = "SINGLE: esperando disparo"
 
-        elif self.trigger_mode == "Normal" and not self.trigger_found:
+        elif (
+            self.trigger_mode == "Normal"
+            and not self.trigger_found
+        ):
             status = "RUN: esperando disparo"
 
         else:
             status = "RUN"
 
-        self.controls.show_state(
-            self.running,
-            status,
-        )
+        self.controls.show_state(self.running, status)
 
     # ================================================================
     # CONTROL HORIZONTAL
     # ================================================================
 
     def set_time_per_division(self, value):
-        self.time_per_division = float(value)
+        value = float(value)
+
+        if not np.isfinite(value) or value <= 0:
+            return
+
+        self.time_per_division = value
 
         self.display_samples = max(
             2,
@@ -437,54 +487,84 @@ class OscilloscopeWidget(QWidget):
             ),
         )
 
-        self.plot.set_time_per_division(
-            self.time_per_division
+        self.plot.set_time_per_division(value)
+        self.controls.set_time_per_division(value)
+
+        self._redraw_last_acquisition()
+
+    def set_horizontal_position(self, divisions):
+        divisions = float(divisions)
+
+        if not np.isfinite(divisions):
+            return
+
+        half_screen = self.horizontal_divisions / 2.0
+
+        # Misma resolución que la perilla: 0.01 div.
+        divisions = round(divisions, 2)
+
+        self.horizontal_position_divisions = float(
+            np.clip(divisions, -half_screen, half_screen)
         )
 
-        self.controls.set_time_per_division(
-            self.time_per_division
+        # Cero divisiones corresponde al centro de la pantalla.
+        self.trigger_position = (
+            0.5
+            + self.horizontal_position_divisions
+            / self.horizontal_divisions
         )
+
+        self.trigger.set_position(self.trigger_position)
+        self.plot.set_trigger_position(self.trigger_position)
+
+        self.controls.set_horizontal_position(
+            self.horizontal_position_divisions
+        )
+
+        self._redraw_last_acquisition()
 
     # ================================================================
     # CONTROL VERTICAL
     # ================================================================
 
     def set_volts_per_division(self, value):
-        self.volts_per_division = float(value)
+        value = float(value)
 
-        self.plot.set_volts_per_division(
-            self.volts_per_division
-        )
+        if not np.isfinite(value) or value <= 0:
+            return
 
-        self.controls.set_volts_per_division(
-            self.volts_per_division
-        )
+        self.volts_per_division = value
 
-        # Conservar la posición en divisiones al cambiar la escala.
+        self.plot.set_volts_per_division(value)
+        self.controls.set_volts_per_division(value)
+
         self.set_vertical_position(
             self.vertical_position_divisions
         )
 
-    def set_vertical_position(self, divisions):
-        """Desplaza la vista y sincroniza perilla y barra lateral."""
+    def _on_position_slider_changed(self, value):
+        self.set_vertical_position(value / 100.0)
 
-        units = max(
+    def set_vertical_position(self, divisions):
+        divisions = float(divisions)
+
+        if not np.isfinite(divisions):
+            return
+
+        slider_value = max(
             -400,
-            min(400, round(float(divisions) * 100)),
+            min(400, round(divisions * 100)),
         )
 
-        self.vertical_position_divisions = units / 100.0
+        self.vertical_position_divisions = slider_value / 100.0
 
-        # OscilloscopePlot suma vertical_offset a los límites Y.
-        # Bajar esos límites hace que la traza suba en pantalla.
+        # Desplaza el rango visible, sin modificar las muestras.
         self.vertical_offset = (
             -self.vertical_position_divisions
             * self.volts_per_division
         )
 
-        self.plot.set_vertical_offset(
-            self.vertical_offset
-        )
+        self.plot.set_vertical_offset(self.vertical_offset)
 
         self.controls.set_vertical_position(
             self.vertical_position_divisions
@@ -493,7 +573,7 @@ class OscilloscopeWidget(QWidget):
         blocker = QSignalBlocker(self.position_slider)
 
         try:
-            self.position_slider.setValue(units)
+            self.position_slider.setValue(slider_value)
         finally:
             del blocker
 
@@ -502,21 +582,39 @@ class OscilloscopeWidget(QWidget):
             f"{self.vertical_position_divisions:+.2f} div"
         )
 
+        self.update_trigger_range()
+
     # ================================================================
-    # CONFIGURACIÓN DEL TRIGGER
+    # TRIGGER
     # ================================================================
+
+    def update_trigger_range(self):
+        minimum, maximum = self.plot.vertical_range()
+
+        self.controls.set_trigger_range(
+            minimum,
+            maximum,
+        )
 
     def set_trigger_level(self, value):
-        self.trigger_level = float(value)
+        value = float(value)
 
-        self.trigger.set_level(self.trigger_level)
-        self.plot.set_trigger_level(self.trigger_level)
-        self.controls.set_trigger_level(self.trigger_level)
+        if not np.isfinite(value):
+            return
+
+        self.trigger_level = value
+
+        self.trigger.set_level(value)
+        self.plot.set_trigger_level(value)
+        self.controls.set_trigger_level(value)
 
         self.trigger_found = False
         self.update_controls_state()
 
     def set_trigger_slope(self, value):
+        if value not in ("Rising", "Falling"):
+            return
+
         self.trigger_slope = value
 
         self.trigger.set_slope(value)
@@ -526,6 +624,9 @@ class OscilloscopeWidget(QWidget):
         self.update_controls_state()
 
     def set_trigger_mode(self, value):
+        if value not in ("Auto", "Normal", "Single"):
+            return
+
         if value == "Single":
             self.single()
             return
@@ -538,7 +639,7 @@ class OscilloscopeWidget(QWidget):
         self.update_controls_state()
 
     # ================================================================
-    # RUN / STOP
+    # RUN / STOP Y SINGLE
     # ================================================================
 
     def toggle_run_stop(self):
@@ -546,6 +647,8 @@ class OscilloscopeWidget(QWidget):
             return
 
         if self.running:
+            # Se congela la adquisición mostrada.
+            # El audio continúa alimentando el buffer.
             self.running = False
 
         elif self.trigger_mode == "Single":
@@ -558,10 +661,6 @@ class OscilloscopeWidget(QWidget):
 
         self.update_controls_state()
 
-    # ================================================================
-    # CAPTURA INDIVIDUAL
-    # ================================================================
-
     def single(self):
         if self._closed or self._audio_error is not None:
             return
@@ -569,8 +668,9 @@ class OscilloscopeWidget(QWidget):
         self.trigger_mode = "Single"
         self.single_mode = True
         self.trigger_found = False
-        self.last_acquisition = None
 
+        # La adquisición anterior permanece visible mientras
+        # se espera el nuevo disparo.
         with self._buffer_lock:
             self.buffer.clear()
             self._new_data = False
@@ -595,8 +695,7 @@ class OscilloscopeWidget(QWidget):
         with self._buffer_lock:
             self._closed = True
 
-        # Detener fuera del bloqueo para permitir que termine
-        # cualquier callback que todavía esté ejecutándose.
+        # Fuera del lock para no bloquear el callback al cerrar.
         self.audio.stop_stream()
 
     def closeEvent(self, event):

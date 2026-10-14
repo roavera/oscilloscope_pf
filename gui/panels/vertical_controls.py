@@ -1,7 +1,6 @@
 """Panel vertical reutilizable para un canal del osciloscopio."""
 
 from PySide6.QtCore import Signal, QSignalBlocker, Qt
-
 from PySide6.QtWidgets import (
     QGroupBox,
     QVBoxLayout,
@@ -10,8 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from gui.position_knob import PositionKnob
-
+from gui.widgets.drag_knob import DragKnob
 
 class VerticalControls(QGroupBox):
 
@@ -40,15 +38,17 @@ class VerticalControls(QGroupBox):
 
         self.create_interface()
         self.connect_signals()
+        self.set_position(0.0)
+
+    # ================================================================
+    # INTERFAZ
+    # ================================================================
 
     def create_interface(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        # ------------------------------------------------------------
-        # ESCALA VERTICAL
-        # ------------------------------------------------------------
-
+        # Escala vertical.
         layout.addWidget(QLabel("Volt/div:"))
 
         self.voltage_combo = QComboBox()
@@ -58,18 +58,28 @@ class VerticalControls(QGroupBox):
 
         layout.addWidget(self.voltage_combo)
 
-        # ------------------------------------------------------------
-        # POSICIÓN
-        # ------------------------------------------------------------
-
+        # Posición vertical.
         position_title = QLabel("Posición")
         position_title.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
 
-        self.position_knob = PositionKnob()
+        self.position_knob = DragKnob(
+            minimum=-4.0,
+            maximum=4.0,
+            step=0.01,
+            initial=0.0,
+            reset_value=0.0,
+            pixels_per_step=1.0,
+            size=76,
+        )
 
-        self.position_label = QLabel("0.00 div")
+        self.position_knob.setToolTip(
+            "Arrastrá hacia arriba o abajo para mover la señal.\n"
+            "Doble clic para centrar."
+        )
+
+        self.position_label = QLabel()
         self.position_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
@@ -88,17 +98,22 @@ class VerticalControls(QGroupBox):
         layout.addWidget(self.position_label)
         layout.addWidget(self.center_button)
 
+    # ================================================================
+    # CONEXIONES
+    # ================================================================
+
     def connect_signals(self):
         self.voltage_combo.currentIndexChanged.connect(
             self._emit_voltage_change
         )
 
-        self.position_knob.valueChanged.connect(
+        # Señal decimal de DragKnob: entrega divisiones directamente.
+        self.position_knob.value_changed.connect(
             self._emit_position_change
         )
 
         self.center_button.clicked.connect(
-            lambda _checked=False: self.position_changed.emit(0.0)
+            self._center_position
         )
 
     def _emit_voltage_change(self, _index):
@@ -107,9 +122,18 @@ class VerticalControls(QGroupBox):
         if value is not None:
             self.volts_per_division_changed.emit(float(value))
 
-    def _emit_position_change(self, units):
-        divisions = units / PositionKnob.UNITS_PER_DIVISION
+    def _emit_position_change(self, divisions):
+        divisions = float(divisions)
+
+        self.position_label.setText(
+            f"{divisions:+.2f} div"
+        )
+
         self.position_changed.emit(divisions)
+
+    def _center_position(self, _checked=False):
+        self.set_position(0.0)
+        self.position_changed.emit(0.0)
 
     # ================================================================
     # ACTUALIZACIÓN DESDE EL CONTROLADOR
@@ -135,25 +159,11 @@ class VerticalControls(QGroupBox):
             del blocker
 
     def set_position(self, divisions):
-        units = round(
-            float(divisions) * PositionKnob.UNITS_PER_DIVISION
-        )
+        # set_value actualiza la perilla sin emitir otra señal.
+        self.position_knob.set_value(float(divisions))
 
-        units = max(
-            self.position_knob.minimum(),
-            min(self.position_knob.maximum(), units),
-        )
-
-        blocker = QSignalBlocker(self.position_knob)
-
-        try:
-            self.position_knob.setValue(units)
-        finally:
-            del blocker
-
-        actual_position = (
-            units / PositionKnob.UNITS_PER_DIVISION
-        )
+        # Muestra el valor efectivo, incluyendo límites y redondeo.
+        actual_position = self.position_knob.numeric_value()
 
         self.position_label.setText(
             f"{actual_position:+.2f} div"
