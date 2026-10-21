@@ -229,6 +229,27 @@ class DragKnob(QDial):
     # ================================================================
 
     def wheelEvent(self, event):
-        # Permite desplazar el panel sin cambiar accidentalmente
-        # el valor al pasar la rueda sobre la perilla.
-        event.ignore()
+
+        delta = event.angleDelta().y()
+
+        if delta == 0:
+            event.ignore()
+            return
+
+        # Cantidad de pasos de la rueda.
+        steps = delta / 120.0
+
+        # Acumular desplazamientos de ruedas de alta resolución.
+        self._wheel_remainder = (
+            getattr(self, "_wheel_remainder", 0.0) + steps
+        )
+
+        whole_steps = int(self._wheel_remainder)
+        self._wheel_remainder -= whole_steps
+
+        if whole_steps:
+            self.setValue(
+                self.value() + whole_steps
+            )
+
+        event.accept()

@@ -4,14 +4,11 @@ from threading import Lock
 
 import numpy as np
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Slot
+from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QLabel,
     QScrollArea,
-    QSlider,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -164,57 +161,12 @@ class OscilloscopeWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # Barra lateral de posición vertical.
-        position_panel = QWidget(self)
-        position_panel.setFixedWidth(48)
-
-        position_layout = QVBoxLayout(position_panel)
-        position_layout.setContentsMargins(4, 8, 4, 8)
-        position_layout.setSpacing(6)
-
-        channel_label = QLabel("CH1")
-        channel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        channel_label.setStyleSheet(
-            "color: #e3c84b; font-weight: bold;"
-        )
-
-        self.position_slider = QSlider(Qt.Orientation.Vertical)
-        self.position_slider.setRange(-400, 400)
-        self.position_slider.setValue(0)
-        self.position_slider.setSingleStep(10)
-        self.position_slider.setPageStep(100)
-        self.position_slider.setInvertedAppearance(False)
-
-        self.position_slider.setStyleSheet("""
-            QSlider::groove:vertical {
-                background: #454545;
-                width: 6px;
-                border-radius: 3px;
-            }
-
-            QSlider::handle:vertical {
-                background: #e3c84b;
-                border: 1px solid #8c7927;
-                height: 18px;
-                margin: 0 -8px;
-                border-radius: 4px;
-            }
-        """)
-
-        position_layout.addWidget(channel_label)
-        position_layout.addWidget(
-            self.position_slider,
-            1,
-            Qt.AlignmentFlag.AlignHCenter,
-        )
-
         # Panel derecho de controles.
         self.controls_scroll = QScrollArea(self)
         self.controls_scroll.setWidgetResizable(True)
         self.controls_scroll.setWidget(self.controls)
         self.controls_scroll.setFixedWidth(490)
 
-        layout.addWidget(position_panel)
         layout.addWidget(self.plot, 1)
         layout.addWidget(self.controls_scroll)
 
@@ -232,6 +184,10 @@ class OscilloscopeWidget(QWidget):
             self.set_horizontal_position
         )
 
+        self.plot.horizontal_position_changed.connect(
+            self.set_horizontal_position
+        )
+
         # Control vertical.
         self.controls.volts_per_division_changed.connect(
             self.set_volts_per_division
@@ -241,8 +197,8 @@ class OscilloscopeWidget(QWidget):
             self.set_vertical_position
         )
 
-        self.position_slider.valueChanged.connect(
-            self._on_position_slider_changed
+        self.plot.vertical_position_changed.connect(
+            self.set_vertical_position
         )
 
         # Trigger desde el panel.
@@ -542,9 +498,6 @@ class OscilloscopeWidget(QWidget):
             self.vertical_position_divisions
         )
 
-    def _on_position_slider_changed(self, value):
-        self.set_vertical_position(value / 100.0)
-
     def set_vertical_position(self, divisions):
         divisions = float(divisions)
 
@@ -568,18 +521,6 @@ class OscilloscopeWidget(QWidget):
 
         self.controls.set_vertical_position(
             self.vertical_position_divisions
-        )
-
-        blocker = QSignalBlocker(self.position_slider)
-
-        try:
-            self.position_slider.setValue(slider_value)
-        finally:
-            del blocker
-
-        self.position_slider.setToolTip(
-            "Posición vertical de CH1: "
-            f"{self.vertical_position_divisions:+.2f} div"
         )
 
         self.update_trigger_range()

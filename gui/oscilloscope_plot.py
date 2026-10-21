@@ -3,14 +3,89 @@
 import numpy as np
 import pyqtgraph as pg
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QRectF, Qt
+from PySide6.QtGui import QColor, QBrush, QPen, QPolygonF
+from PySide6.QtCore import QPointF
+from PySide6.QtWidgets import QGraphicsObject
 from PySide6.QtWidgets import QWidget, QVBoxLayout
+
+
+class ChannelMarker(QGraphicsObject):
+    """Triángulo CH1 de tamaño fijo, arrastrable sobre el eje izquierdo."""
+
+    def __init__(self, plot):
+        super().__init__()
+        self.plot = plot
+        self.setZValue(40)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setToolTip("CH1 · Posición de 0 V. Arrastrá para mover el canal.")
+
+    def boundingRect(self):
+        return QRectF(-2, -13, 32, 26)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#a28d30"), 1))
+        painter.setBrush(QBrush(QColor("#e3c84b")))
+        painter.drawPolygon(QPolygonF([
+            QPointF(0, -11), QPointF(28, 0), QPointF(0, 11)
+        ]))
+        painter.setPen(QColor("#171717"))
+        painter.drawText(QRectF(1, -10, 16, 20),
+                         Qt.AlignmentFlag.AlignCenter, "1")
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+
+        # Guardamos la referencia al inicio del arrastre. No usamos la
+        # posición actual del marcador porque se mueve junto con el rango Y.
+        self._drag_start_scene_y = event.scenePos().y()
+        self._drag_start_divisions = (
+            -self.plot.vertical_offset / self.plot.volts_per_division
+        )
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not hasattr(self, "_drag_start_scene_y"):
+            event.ignore()
+            return
+
+        view = self.plot.plot_widget.getViewBox()
+        height = view.sceneBoundingRect().height()
+        if height <= 0:
+            event.accept()
+            return
+
+        delta_pixels = self._drag_start_scene_y - event.scenePos().y()
+        delta_divisions = (
+            delta_pixels * self.plot.vertical_divisions / height
+        )
+        half = self.plot.vertical_divisions / 2.0
+        divisions = float(np.clip(
+            self._drag_start_divisions + delta_divisions, -half, half
+        ))
+
+        # El controlador es el único que cambia el offset y actualiza
+        # el gráfico. Así evitamos actualizaciones duplicadas.
+        self.plot.vertical_position_changed.emit(divisions)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if hasattr(self, "_drag_start_scene_y"):
+            del self._drag_start_scene_y
+        event.accept()
 
 
 class OscilloscopePlot(QWidget):
 
     # Se emite solo cuando el usuario arrastra el trigger.
     trigger_level_changed = Signal(float)
+    horizontal_position_changed = Signal(float)
+    vertical_position_changed = Signal(float)
 
     def __init__(
         self,
@@ -124,13 +199,22 @@ class OscilloscopePlot(QWidget):
         self.trigger_vertical_line = pg.InfiniteLine(
             pos=0.0,
             angle=90,
-            movable=False,
-            pen=pg.mkPen("#808080", width=1),
+            movable=True,
+            pen=pg.mkPen("#808080", width=1.3),
+            hoverPen=pg.mkPen("#b0b0b0", width=2),
+        )
+        self.trigger_vertical_line.addMarker("v", position=0.98, size=18)
+        self.trigger_vertical_line.setZValue(15)
+        self.trigger_vertical_line.setToolTip(
+            "Arrastrá la línea o el triángulo gris para ajustar la posición horizontal."
         )
 
         self.plot_widget.addItem(
             self.trigger_vertical_line,
             ignoreBounds=True,
+        )
+        self.trigger_vertical_line.sigDragged.connect(
+            self._on_horizontal_reference_dragged
         )
 
         # ------------------------------------------------------------
@@ -149,7 +233,24 @@ class OscilloscopePlot(QWidget):
             ignoreBounds=True,
         )
 
+        # Marcador independiente: no dibuja ninguna línea horizontal.
+        self.channel_marker = ChannelMarker(self)
+        self.plot_widget.scene().addItem(self.channel_marker)
+        view = self.plot_widget.getViewBox()
+        view.sigRangeChanged.connect(self._update_channel_marker)
+        view.sigResized.connect(self._update_channel_marker)
+
         self.update_scales()
+
+    def _update_channel_marker(self, *args):
+        """Fija el triángulo al borde izquierdo y a la altura de 0 V."""
+        view = self.plot_widget.getViewBox()
+        scene_rect = view.sceneBoundingRect()
+        zero_scene_y = view.mapViewToScene(QPointF(0.0, 0.0)).y()
+        # Posición siempre visible, aun en los extremos ±4 divisiones.
+        y = float(np.clip(zero_scene_y, scene_rect.top() + 12,
+                          scene_rect.bottom() - 12))
+        self.channel_marker.setPos(scene_rect.left() - 27, y)
 
     # ================================================================
     # RANGOS VISIBLES
@@ -191,6 +292,8 @@ class OscilloscopePlot(QWidget):
 
         self._update_time_reference()
         self._update_trigger_notice()
+        if hasattr(self, "channel_marker"):
+            self._update_channel_marker()
 
     def _update_time_reference(self):
         total_time = (
@@ -203,6 +306,21 @@ class OscilloscopePlot(QWidget):
         )
 
         self.trigger_vertical_line.setValue(trigger_time)
+
+    def _on_horizontal_reference_dragged(self, line):
+        """Convierte la posición temporal arrastrada a divisiones."""
+        total_time = self.time_per_division * self.horizontal_divisions
+        if total_time <= 0:
+            return
+        fraction = (float(line.value()) - self.horizontal_position) / total_time
+        fraction = float(np.clip(fraction, 0.0, 1.0))
+        divisions = round((fraction - 0.5) * self.horizontal_divisions, 2)
+        # Se limita la línea inmediatamente y el controlador sincroniza
+        # la perilla y el recorte de adquisición.
+        self.trigger_vertical_line.setValue(
+            self.horizontal_position + fraction * total_time
+        )
+        self.horizontal_position_changed.emit(divisions)
 
     def _update_trigger_notice(self):
         y_min, y_max = self.vertical_range()
