@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QScrollArea,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -18,7 +19,7 @@ from trigger.edge_trigger import Edge_Trigger
 
 from gui.controls import OscilloscopeControls
 from gui.oscilloscope_plot import OscilloscopePlot
-
+from gui.widgets.cursor_controls import CursorControls
 
 class OscilloscopeWidget(QWidget):
 
@@ -125,6 +126,7 @@ class OscilloscopeWidget(QWidget):
             vertical_offset=self.vertical_offset,
         )
 
+        self.cursor_controls = CursorControls()
         self.create_interface()
         self.connect_signals()
 
@@ -164,7 +166,12 @@ class OscilloscopeWidget(QWidget):
         # Panel derecho de controles.
         self.controls_scroll = QScrollArea(self)
         self.controls_scroll.setWidgetResizable(True)
-        self.controls_scroll.setWidget(self.controls)
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self.controls)
+        right_layout.addWidget(self.cursor_controls)
+        self.controls_scroll.setWidget(right_container)
         self.controls_scroll.setFixedWidth(490)
 
         layout.addWidget(self.plot, 1)
@@ -175,6 +182,8 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def connect_signals(self):
+        self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
+        self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
         # Control horizontal.
         self.controls.time_per_division_changed.connect(
             self.set_time_per_division

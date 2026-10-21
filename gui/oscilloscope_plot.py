@@ -86,6 +86,7 @@ class OscilloscopePlot(QWidget):
     trigger_level_changed = Signal(float)
     horizontal_position_changed = Signal(float)
     vertical_position_changed = Signal(float)
+    cursor_readout_changed = Signal(str)
 
     def __init__(
         self,
@@ -113,6 +114,11 @@ class OscilloscopePlot(QWidget):
         self.trigger_level = float(trigger_level)
         self.trigger_position = float(trigger_position)
 
+        self.cursor_mode = "Off"
+        self.cursor_orientation = "Tiempo"
+        self._cursor_updating = False
+        self._cursor_signal_x = np.array([], dtype=float)
+        self._cursor_signal_y = np.array([], dtype=float)
         self.create_interface()
 
     # ================================================================
@@ -240,6 +246,7 @@ class OscilloscopePlot(QWidget):
         view.sigRangeChanged.connect(self._update_channel_marker)
         view.sigResized.connect(self._update_channel_marker)
 
+        self._create_cursors()
         self.update_scales()
 
     def _update_channel_marker(self, *args):
@@ -294,6 +301,8 @@ class OscilloscopePlot(QWidget):
         self._update_trigger_notice()
         if hasattr(self, "channel_marker"):
             self._update_channel_marker()
+        if hasattr(self, "cursor_lines"):
+            self._refresh_cursors()
 
     def _update_time_reference(self):
         total_time = (
@@ -411,11 +420,17 @@ class OscilloscopePlot(QWidget):
             # Auto sin disparo: ubica la ventana desde el borde izquierdo.
             time_axis += self.horizontal_position
 
+        self._cursor_signal_x = time_axis.copy()
+        self._cursor_signal_y = np.asarray(signal, dtype=float).copy()
         self.curve.setData(time_axis, signal)
+        self._refresh_cursors()
 
     def clear_signal(self):
         """Limpia la traza conservando escalas y referencias."""
+        self._cursor_signal_x = np.array([], dtype=float)
+        self._cursor_signal_y = np.array([], dtype=float)
         self.curve.setData([], [])
+        self._refresh_cursors()
 
     # ================================================================
     # ACTUALIZACIÓN DESDE EL CONTROLADOR
@@ -495,3 +510,112 @@ class OscilloscopePlot(QWidget):
 
         self.horizontal_position = position
         self.update_scales()
+
+    # ================================================================
+    # CURSORES: MANUAL (TIEMPO/TENSIÓN) Y TRACK (SOBRE CH1)
+    # ================================================================
+
+    def _create_cursors(self):
+        self.cursor_lines = []
+        colors = ('#33d6e8', '#ffad4d')
+        for index, color in enumerate(colors):
+            line = pg.InfiniteLine(
+                pos=0.0, angle=90, movable=True,
+                pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine),
+                hoverPen=pg.mkPen(color, width=3),
+            )
+            line.setZValue(25)
+            line.setToolTip(f'Cursor {index + 1}: arrastrá para medir')
+            self.plot_widget.addItem(line, ignoreBounds=True)
+            line.sigPositionChanged.connect(self._refresh_cursors)
+            self.cursor_lines.append(line)
+        self.cursor_points = []
+        for color in colors:
+            point = pg.ScatterPlotItem(size=12, brush=pg.mkBrush(color),
+                                       pen=pg.mkPen('#181818', width=1.5))
+            point.setZValue(29)
+            self.plot_widget.addItem(point, ignoreBounds=True)
+            self.cursor_points.append(point)
+        self._cursor_positions = [0.3, 0.7]
+        self._cursor_initialized = False
+        self._refresh_cursors()
+
+    def set_cursor_mode(self, mode, orientation='Tiempo'):
+        if mode not in ('Off', 'Manual', 'Track'):
+            return
+        if orientation not in ('Tiempo', 'Tensión'):
+            return
+        was_off = self.cursor_mode == 'Off'
+        self.cursor_mode = mode
+        self.cursor_orientation = orientation
+        if was_off and mode != 'Off':
+            self._cursor_initialized = False
+        self._refresh_cursors()
+
+    def _refresh_cursors(self, *args):
+        if self._cursor_updating or not hasattr(self, 'cursor_lines'):
+            return
+        self._cursor_updating = True
+        try:
+            mode = self.cursor_mode
+            is_voltage = mode == 'Manual' and self.cursor_orientation == 'Tensión'
+            xmin, xmax = self.plot_widget.getViewBox().viewRange()[0]
+            ymin, ymax = self.plot_widget.getViewBox().viewRange()[1]
+            if not self._cursor_initialized and mode != 'Off':
+                for i, line in enumerate(self.cursor_lines):
+                    fraction = self._cursor_positions[i]
+                    line.setValue(ymin + fraction * (ymax-ymin) if is_voltage
+                                  else xmin + fraction * (xmax-xmin))
+                self._cursor_initialized = True
+            values = []
+            for i, line in enumerate(self.cursor_lines):
+                line.setVisible(mode != 'Off')
+                line.setAngle(0 if is_voltage else 90)
+                lo, hi = (ymin, ymax) if is_voltage else (xmin, xmax)
+                value = float(np.clip(line.value(), lo, hi))
+                if abs(value - float(line.value())) > 1e-12:
+                    line.setValue(value)
+                values.append(value)
+                self.cursor_points[i].setVisible(mode == 'Track')
+            if mode == 'Off':
+                result = 'Cursores desactivados'
+            elif is_voltage:
+                a, b = values
+                result = (f'C1: {a:+.6g} V    C2: {b:+.6g} V\n'
+                          f'ΔV: {b-a:+.6g} V  |ΔV|: {abs(b-a):.6g} V')
+            elif mode == 'Manual':
+                a, b = values
+                dt = b-a
+                result = (f'C1: {a:.6g} s    C2: {b:.6g} s\n'
+                          f'Δt: {dt:+.6g} s  |Δt|: {abs(dt):.6g} s')
+                if abs(dt) > 1e-15:
+                    result += f'    1/|Δt|: {1/abs(dt):.6g} Hz'
+            else:
+                x = self._cursor_signal_x
+                y = self._cursor_signal_y
+                if x.size < 2 or y.size != x.size:
+                    result = 'Track: esperando muestras de CH1'
+                    for point in self.cursor_points:
+                        point.setData([], [])
+                else:
+                    # Interpolación lineal: valores en coordenadas físicas.
+                    samples = []
+                    for i, t in enumerate(values):
+                        if x[0] <= t <= x[-1]:
+                            v = float(np.interp(t, x, y))
+                            self.cursor_points[i].setData([t], [v])
+                            samples.append(v)
+                        else:
+                            self.cursor_points[i].setData([], [])
+                            samples.append(None)
+                    if all(v is not None for v in samples):
+                        a, b = values
+                        va, vb = samples
+                        result = (f'C1: t={a:.6g} s, V={va:+.6g} V\n'
+                                  f'C2: t={b:.6g} s, V={vb:+.6g} V\n'
+                                  f'Δt={b-a:+.6g} s   ΔV={vb-va:+.6g} V')
+                    else:
+                        result = 'Track: cursor fuera del tramo adquirido'
+            self.cursor_readout_changed.emit(result)
+        finally:
+            self._cursor_updating = False
