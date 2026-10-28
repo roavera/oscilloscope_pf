@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from acquisition.audio_input import AudioInput
+from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.acquisition_buffer import AcquisitionBuffer
 from trigger.edge_trigger import Edge_Trigger
 
@@ -101,7 +101,8 @@ class OscilloscopeWidget(QWidget):
 
         self.buffer = AcquisitionBuffer(self.sample_rate)
 
-        self.audio = AudioInput(
+        self.acquisition = AcquisitionManager(
+            source=AcquisitionManager.AUDIO,
             sample_rate=self.sample_rate,
             channels=self.channels,
             blocksize=self.blocksize,
@@ -152,7 +153,7 @@ class OscilloscopeWidget(QWidget):
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
 
-        self.start_audio()
+        self.start_acquisition()
 
     # ================================================================
     # INTERFAZ
@@ -241,9 +242,9 @@ class OscilloscopeWidget(QWidget):
     # AUDIO
     # ================================================================
 
-    def start_audio(self):
+    def start_acquisition(self):
         try:
-            self.audio.start_stream(self.audio_callback)
+            self.acquisition.start(self.on_samples_received)
 
         except Exception as error:
             self._audio_error = str(error)
@@ -253,9 +254,10 @@ class OscilloscopeWidget(QWidget):
             self.update_controls_state()
 
         else:
+            self._audio_error = None
             self.display_timer.start()
 
-    def audio_callback(self, data):
+    def on_samples_received(self, data):
         """Guarda muestras sin acceder a los widgets."""
 
         samples = np.asarray(data, dtype=np.float32)
@@ -646,7 +648,7 @@ class OscilloscopeWidget(QWidget):
             self._closed = True
 
         # Fuera del lock para no bloquear el callback al cerrar.
-        self.audio.stop_stream()
+        self.acquisition.stop()
 
     def closeEvent(self, event):
         self.shutdown()
