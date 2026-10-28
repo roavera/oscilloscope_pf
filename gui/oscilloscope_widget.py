@@ -255,7 +255,59 @@ class OscilloscopeWidget(QWidget):
 
         else:
             self._audio_error = None
+            self.controls.set_acquisition_enabled(True)
+            self.running = True
             self.display_timer.start()
+            self.update_controls_state()
+
+    def change_acquisition_source(self, source, sample_rate=None):
+        """Cambia la fuente desde el hilo principal de Qt.
+
+        Las fuentes sin backend quedan configuradas, pero no se inician.
+        """
+        if self._closed:
+            return
+        # Validar antes de detener la fuente actual.
+        if source not in self.acquisition.SAMPLE_RATES:
+            raise ValueError(f"Fuente desconocida: {source}")
+        rate = float(sample_rate if sample_rate is not None
+                     else self.acquisition.SAMPLE_RATES[source])
+        if not np.isfinite(rate) or rate <= 0:
+            raise ValueError("Frecuencia de muestreo inválida")
+
+        self.display_timer.stop()
+        self.running = False
+        self.acquisition.change_source(source, rate)
+        self.reset_acquisition(rate)
+        self._audio_error = None
+
+        if source == AcquisitionManager.AUDIO:
+            self.start_acquisition()
+        else:
+            # Los backends del simulador y USB se incorporan después.
+            self.controls.set_acquisition_enabled(False)
+            self.update_controls_state()
+
+    def reset_acquisition(self, sample_rate):
+        """Descarta muestras previas y actualiza la base temporal."""
+        rate = float(sample_rate)
+        if not np.isfinite(rate) or rate <= 0:
+            raise ValueError("Frecuencia de muestreo inválida")
+        with self._buffer_lock:
+            self.sample_rate = rate
+            self.buffer = AcquisitionBuffer(max(1, int(np.ceil(rate))))
+            self._new_data = False
+        self.display_samples = max(
+            2, int(self.sample_rate * self.time_per_division
+                   * self.horizontal_divisions)
+        )
+        self.trigger_found = False
+        self.single_mode = False
+        self.last_acquisition = None
+        self._last_display_buffer = None
+        self._last_trigger_index = None
+        self._last_fractional_offset = 0.0
+        self.plot.clear_signal()
 
     def on_samples_received(self, data):
         """Guarda muestras sin acceder a los widgets."""
@@ -411,7 +463,7 @@ class OscilloscopeWidget(QWidget):
         if self._audio_error is not None:
             self.controls.show_state(
                 False,
-                "ERROR DE AUDIO",
+                "ERROR DE ADQUISICIÓN",
                 self._audio_error,
             )
             return
