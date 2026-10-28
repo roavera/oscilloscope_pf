@@ -11,6 +11,7 @@ from gui.panels.vertical_controls import VerticalControls
 from gui.panels.horizontal_controls import HorizontalControls
 from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
+from gui.panels.simulator_controls import SimulatorControls
 
 
 class OscilloscopeControls(QWidget):
@@ -31,6 +32,7 @@ class OscilloscopeControls(QWidget):
 
     run_stop_clicked = Signal()
     single_clicked = Signal()
+    simulator_settings_changed = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,6 +56,8 @@ class OscilloscopeControls(QWidget):
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
         self.acquisition_controls = AcquisitionControls()
+        self.simulator_controls = SimulatorControls()
+        self.simulator_controls.setVisible(False)
 
         # Fila superior: adquisición.
         layout.addWidget(
@@ -88,13 +92,18 @@ class OscilloscopeControls(QWidget):
         layout.setColumnStretch(2, 1)
 
         # El espacio adicional queda debajo del conjunto.
-        layout.setRowStretch(2, 1)
+        layout.addWidget(self.simulator_controls, 2, 0, 1, 3)
+        layout.setRowStretch(3, 1)
 
     # ================================================================
     # REENVÍO DE SEÑALES
     # ================================================================
 
     def connect_signals(self):
+        self.simulator_controls.settings_changed.connect(
+            self.simulator_settings_changed.emit
+        )
+
         # Control vertical.
         self.ch1_controls.volts_per_division_changed.connect(
             self.volts_per_division_changed.emit

@@ -86,6 +86,7 @@ class OscilloscopeWidget(QWidget):
         self._closed = False
         self._audio_error = None
         self._new_data = False
+        self._source_generation = 0
 
         self._buffer_lock = Lock()
 
@@ -137,6 +138,7 @@ class OscilloscopeWidget(QWidget):
         self.display_timer.timeout.connect(self.process_data)
 
         self.controls.sync_settings(self)
+        self.controls.simulator_controls.setVisible(False)
 
         self.set_vertical_position(
             self.vertical_position_divisions
@@ -183,6 +185,10 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def connect_signals(self):
+        self.controls.simulator_settings_changed.connect(
+            self._on_simulator_settings_changed
+        )
+
         self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
         # Control horizontal.
@@ -239,12 +245,15 @@ class OscilloscopeWidget(QWidget):
         )
 
     # ================================================================
-    # AUDIO
+    # ADQUISICIÓN
     # ================================================================
 
     def start_acquisition(self):
         try:
-            self.acquisition.start(self.on_samples_received)
+            generation = self._source_generation
+            self.acquisition.start(
+                lambda data: self.on_samples_received(data, generation)
+            )
 
         except Exception as error:
             self._audio_error = str(error)
@@ -263,7 +272,7 @@ class OscilloscopeWidget(QWidget):
     def change_acquisition_source(self, source, sample_rate=None):
         """Cambia la fuente desde el hilo principal de Qt.
 
-        Las fuentes sin backend quedan configuradas, pero no se inician.
+        Audio y simulador se inician automáticamente; USB COM queda pendiente.
         """
         if self._closed:
             return
@@ -277,16 +286,34 @@ class OscilloscopeWidget(QWidget):
 
         self.display_timer.stop()
         self.running = False
+        with self._buffer_lock:
+            self._source_generation += 1
         self.acquisition.change_source(source, rate)
         self.reset_acquisition(rate)
+        self.controls.simulator_controls.setVisible(source == AcquisitionManager.SIMULATOR)
         self._audio_error = None
 
-        if source == AcquisitionManager.AUDIO:
+        if source in (AcquisitionManager.AUDIO, AcquisitionManager.SIMULATOR):
             self.start_acquisition()
+            if source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
+                self._on_simulator_settings_changed({
+                    "waveform": self.controls.simulator_controls.waveform.currentData(),
+                    "frequency": self.controls.simulator_controls.frequency.value(),
+                    "amplitude": self.controls.simulator_controls.amplitude.value(),
+                    "offset": self.controls.simulator_controls.offset.value(),
+                    "noise": self.controls.simulator_controls.noise.value(),
+                })
         else:
-            # Los backends del simulador y USB se incorporan después.
             self.controls.set_acquisition_enabled(False)
             self.update_controls_state()
+
+    def _on_simulator_settings_changed(self, settings):
+        if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
+            self.configure_simulator(channel=0, **settings)
+
+    def configure_simulator(self, channel=0, **kwargs):
+        """Actualiza la señal simulada sin reiniciar la adquisición."""
+        self.acquisition.configure_simulator(channel=channel, **kwargs)
 
     def reset_acquisition(self, sample_rate):
         """Descarta muestras previas y actualiza la base temporal."""
@@ -309,18 +336,21 @@ class OscilloscopeWidget(QWidget):
         self._last_fractional_offset = 0.0
         self.plot.clear_signal()
 
-    def on_samples_received(self, data):
-        """Guarda muestras sin acceder a los widgets."""
-
+    def on_samples_received(self, data, generation=None):
+        """Recibe (N,C); CH1 se visualiza por ahora."""
         samples = np.asarray(data, dtype=np.float32)
-
+        if samples.ndim == 2:
+            if samples.shape[1] not in (1, 2):
+                return
+            samples = samples[:, 0]
+        elif samples.ndim != 1:
+            return
         if samples.size == 0:
             return
-
         with self._buffer_lock:
-            if self._closed:
+            if self._closed or (generation is not None and
+                                generation != self._source_generation):
                 return
-
             self.buffer.add_samples(samples)
             self._new_data = True
 
