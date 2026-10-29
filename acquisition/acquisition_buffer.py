@@ -1,29 +1,24 @@
-"""
-===============================================================================
-MÓDULO DE BUFFER DE ADQUISICIÓN TEMPORAL (SLIDING ACQUISITION BUFFER)
-===============================================================================
-Proyecto:       Osciloscopio y Analizador de Audio por Software (DSO)
-Institución:    Facultad de Ingeniería
-Descripción:
-    Estructura de almacenamiento continuo FIFO basada en un buffer lineal con
-    desplazamiento temporal (Sliding Window) implementado sobre NumPy.
-    
-    Características principales:
-      - Almacenamiento continuo de muestras en punto flotante (np.float32).
-      - Manejo dinámico de régimen transitorio (llenado) y estacionario (shift).
-      - Retención de ventana histórica continua para análisis de Pre-trigger.
-      - Desacoplamiento de memoria mediante copia segura para consumo en GUI.
 
-Entrada:        Bloques de muestras discretas (NumPy array 1D / listas).
-Salida:         Arreglo NumPy continuo de las últimas N muestras válidas.
-===============================================================================
 """
+Buffer circular de adquisición para osciloscopio digital.
+
+- Almacenamiento continuo de muestras float32.
+- Capacidad independiente de Time/div.
+- Conserva las muestras más recientes.
+- Compatible con CH1 mono del decodificador Blackpill.
+- Lectura cronológica mediante get_data().
+"""
+
 import numpy as np
+
 
 class AcquisitionBuffer:
 
-    def __init__(self, size):
-        self.size = size
+    def __init__(self, size=1_048_576):
+        self.size = int(size)
+
+        if self.size <= 0:
+            raise ValueError("El tamaño debe ser positivo")
 
         self.buffer = np.zeros(
             self.size,
@@ -31,61 +26,84 @@ class AcquisitionBuffer:
         )
 
         self.valid_samples = 0
+        self.write_index = 0
 
     def clear(self):
-        self.buffer[:] = 0
+        """Reinicia el buffer."""
+        self.buffer.fill(0)
         self.valid_samples = 0
+        self.write_index = 0
 
     def add_samples(self, samples):
+        """Agrega muestras sin desplazar el historial."""
+
         samples = np.asarray(
             samples,
             dtype=np.float32
-        ).flatten()
+        ).reshape(-1)
 
-        if len(samples) == 0:
+        n = samples.size
+
+        if n == 0:
             return
 
-        n = len(samples)
-
-        # Si entran más muestras que el tamaño del buffer
+        # Bloque mayor o igual a la capacidad
         if n >= self.size:
             self.buffer[:] = samples[-self.size:]
             self.valid_samples = self.size
+            self.write_index = 0
             return
 
-        # --------------------------------------------------
-        # BUFFER TODAVÍA NO LLENO
-        # --------------------------------------------------
-        if self.valid_samples < self.size:
-            available = self.size - self.valid_samples
+        # Cantidad disponible hasta el final
+        first = min(n, self.size - self.write_index)
 
-            amount = min(n, available)
+        self.buffer[
+            self.write_index:self.write_index + first
+        ] = samples[:first]
 
-            self.buffer[
-                self.valid_samples:
-                self.valid_samples + amount
-            ] = samples[:amount]
+        # Si el bloque cruza el final del buffer
+        remaining = n - first
 
-            self.valid_samples += amount
+        if remaining > 0:
+            self.buffer[:remaining] = samples[first:]
 
-            # Si sobraron muestras
-            if amount < n:
-                remaining = samples[amount:]
-                nr = len(remaining)
-                self.buffer[:-nr] = self.buffer[nr:]
-                self.buffer[-nr:] = remaining
-                self.valid_samples = self.size
-            return
+        # Actualizar índice circular
+        self.write_index = (
+            self.write_index + n
+        ) % self.size
 
-        # --------------------------------------------------
-        # BUFFER LLENO
-        # --------------------------------------------------
-        self.buffer[:-n] = self.buffer[n:]
-        self.buffer[-n:] = samples
+        self.valid_samples = min(
+            self.size,
+            self.valid_samples + n
+        )
 
+    def get_data(self, count=None):
+        """
+        Devuelve muestras en orden cronológico.
 
-    def get_data(self):
-        return self.buffer[:self.valid_samples].copy()
+        count=None: devuelve todo el historial válido.
+        count=N: devuelve las últimas N muestras.
+        """
+
+        n = self.valid_samples
+
+        if count is not None:
+            n = min(n, max(0, int(count)))
+
+        if n == 0:
+            return np.empty(0, dtype=np.float32)
+
+        start = (self.write_index - n) % self.size
+        end = start + n
+
+        if end <= self.size:
+            return self.buffer[start:end].copy()
+
+        first = self.buffer[start:]
+        second = self.buffer[:end - self.size]
+
+        return np.concatenate((first, second))
 
     def is_full(self):
-        return self.valid_samples >= self.size
+        """Indica si el buffer alcanzó su capacidad."""
+        return self.valid_samples == self.size
