@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from acquisition.acquisition_manager import AcquisitionManager
 from .oscilloscope_widget import OscilloscopeWidget
-
+from .theme.theme_manager import ThemeManager
 
 class PortDialog(QDialog):
     """Selector actualizable. También admite escribir COM5 o /dev/ttyACM0."""
@@ -100,6 +100,9 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._last_error = None
         self._error_box = None
+        
+        self.theme_manager = ThemeManager(self)
+        self.theme_manager.apply_theme(self.theme_manager.current_theme)
 
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
@@ -115,6 +118,8 @@ class MainWindow(QMainWindow):
             self._on_acquisition_state
         )
         self.oscilloscope.acquisition_error.connect(self._show_error)
+        
+        self._create_appearance_menu()
 
         # También refleja RUN/STOP, que no cambia el estado del enlace.
         self.status_timer = QTimer(self)
@@ -122,6 +127,46 @@ class MainWindow(QMainWindow):
         self.status_timer.timeout.connect(self._update_status)
         self.status_timer.start()
         self._update_status()
+        
+    
+    def _create_appearance_menu(self):
+        menu = self.menuBar().addMenu("Apariencia")
+
+        self.theme_group = QActionGroup(self)
+        self.theme_group.setExclusive(True)
+
+        self.dark_action = QAction("Modo noche", self)
+        self.dark_action.setCheckable(True)
+
+        self.light_action = QAction("Modo día", self)
+        self.light_action.setCheckable(True)
+
+        self.theme_group.addAction(self.dark_action)
+        self.theme_group.addAction(self.light_action)
+
+        menu.addAction(self.dark_action)
+        menu.addAction(self.light_action)
+
+        self.dark_action.triggered.connect(
+            lambda: self.theme_manager.apply_theme("dark")
+        )
+        self.light_action.triggered.connect(
+            lambda: self.theme_manager.apply_theme("light")
+        )
+
+        self.theme_manager.theme_changed.connect(
+            self._update_theme_actions
+        )
+
+        self._update_theme_actions(
+            self.theme_manager.current_theme
+        )
+
+
+    def _update_theme_actions(self, theme):
+        self.dark_action.setChecked(theme == "dark")
+        self.light_action.setChecked(theme == "light")
+
 
     def _create_acquisition_menu(self):
         menu = self.menuBar().addMenu("Adquisición")
