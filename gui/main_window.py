@@ -6,11 +6,22 @@ Adquisición > Fuente > Blackpill USB COM abre el selector de puerto.
 STOP congela la pantalla; Desconectar detiene la fuente y cierra el COM.
 """
 
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QActionGroup
+
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
-    QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+    QWidgetAction,
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
@@ -208,8 +219,28 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_error(str(exc))
         finally:
-            self._update_status()
-            
+            self._update_status() 
+    
+    def _set_grid_enabled(self, enabled):
+        self.oscilloscope.plot.set_grid_enabled(enabled)
+
+        self.theme_manager.settings.setValue(
+            "display/grid_enabled",
+            enabled,
+        )
+
+
+    def _set_grid_intensity(self, value):
+        self.oscilloscope.plot.set_grid_intensity(value)
+
+        self.grid_intensity_label.setText(
+            f"Intensidad de grilla: {value} %"
+        )
+
+        self.theme_manager.settings.setValue(
+            "display/grid_intensity",
+            value,
+        )
     
     def _create_display_menu(self):
         """Selector independiente de apariencia del gráfico."""
@@ -251,7 +282,70 @@ class MainWindow(QMainWindow):
             saved = "dark"
 
         self._set_display_theme(saved)
+        
+        
+        # --------------------------------------------------
+        # CONTROLES DE GRILLA
+        # --------------------------------------------------
 
+        menu.addSeparator()
+
+        self.grid_action = QAction(
+            "Mostrar grilla", self
+        )
+        self.grid_action.setCheckable(True)
+
+        grid_enabled = self.theme_manager.settings.value(
+            "display/grid_enabled",
+            True,
+            type=bool,
+        )
+
+        self.grid_action.setChecked(grid_enabled)
+        menu.addAction(self.grid_action)
+
+        self.grid_action.toggled.connect(
+            self._set_grid_enabled
+        )
+
+        self._set_grid_enabled(grid_enabled)
+
+        # Control de intensidad
+        grid_widget = QWidget(menu)
+        grid_layout = QVBoxLayout(grid_widget)
+        grid_layout.setContentsMargins(12, 6, 12, 8)
+
+        self.grid_intensity_label = QLabel(
+            "Intensidad de grilla: 50 %"
+        )
+        grid_layout.addWidget(self.grid_intensity_label)
+
+        self.grid_intensity_slider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self.grid_intensity_slider.setRange(0, 100)
+        self.grid_intensity_slider.setSingleStep(5)
+
+        saved_intensity = self.theme_manager.settings.value(
+            "display/grid_intensity",
+            50,
+            type=int,
+        )
+
+        saved_intensity = max(0, min(100, saved_intensity))
+
+        self.grid_intensity_slider.setValue(saved_intensity)
+        grid_layout.addWidget(self.grid_intensity_slider)
+
+        slider_action = QWidgetAction(menu)
+        slider_action.setDefaultWidget(grid_widget)
+        menu.addAction(slider_action)
+
+        self.grid_intensity_slider.valueChanged.connect(
+            self._set_grid_intensity
+        )
+
+        self._set_grid_intensity(saved_intensity)
 
     def _set_display_theme(self, theme):
         self.oscilloscope.plot.set_display_theme(theme)

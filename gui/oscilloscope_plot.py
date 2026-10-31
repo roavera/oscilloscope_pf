@@ -3,13 +3,12 @@
 import numpy as np
 import pyqtgraph as pg
 
-from PySide6.QtCore import Signal, QRectF, Qt
+from PySide6.QtCore import Signal, QRectF, Qt, QPointF
 from PySide6.QtGui import QColor, QBrush, QPen, QPolygonF
-from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QGraphicsObject
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QGraphicsObject, QWidget, QVBoxLayout
 
 from .theme.colors import PLOT_COLORS
+from .oscilloscope_grid import OscilloscopeGrid
 
 class ChannelMarker(QGraphicsObject):
     """Triángulo CH1 de tamaño fijo, arrastrable sobre el eje izquierdo."""
@@ -128,6 +127,17 @@ class OscilloscopePlot(QWidget):
         self._cursor_signal_y = np.array([], dtype=float)
         self.display_theme = "dark"
         self.create_interface()
+            
+    def set_grid_enabled(self, enabled: bool):
+        """Activa o desactiva la grilla del display."""
+        self.grid.set_grid_enabled(enabled)
+
+
+    def set_grid_intensity(self, percentage: int):
+        """Ajusta la intensidad de la grilla entre 0 y 100 %."""
+        percentage = max(0, min(100, int(percentage)))
+        self.grid.set_grid_intensity(percentage / 100.0)
+
     
     def set_display_theme(self, theme_name: str):
         """Cambia la apariencia del gráfico sin modificar la adquisición."""
@@ -197,7 +207,21 @@ class OscilloscopePlot(QWidget):
 
         # Repintar sin cambiar escalas ni muestras.
         self.plot_widget.update()
+        
+        self.grid.set_theme(theme_name)
 
+    def _update_grid(self, *args):
+        view = self.plot_widget.getViewBox()
+        x_range, y_range = view.viewRange()
+
+        self.grid.set_rect(
+            QRectF(
+                x_range[0],
+                y_range[0],
+                x_range[1] - x_range[0],
+                y_range[1] - y_range[0],
+            )
+        )
     
     # ================================================================
     # INTERFAZ
@@ -222,11 +246,20 @@ class OscilloscopePlot(QWidget):
             units="s",
         )
 
-        self.plot_widget.showGrid(
-            x=True,
-            y=True,
-            alpha=0.18,
+        self.plot_widget.showGrid(x=False, y=False)
+
+        self.grid = OscilloscopeGrid(
+            horizontal_divisions=self.horizontal_divisions,
+            vertical_divisions=self.vertical_divisions,
         )
+
+        self.plot_widget.addItem(self.grid, ignoreBounds=True)
+        # Mantener la grilla por debajo de la traza y los indicadores.
+        self.grid.setZValue(1)
+
+        view = self.plot_widget.getViewBox()
+        view.sigRangeChanged.connect(self._update_grid)
+        view.sigResized.connect(self._update_grid)
 
         self.plot_widget.enableAutoRange(
             x=False,
@@ -240,6 +273,7 @@ class OscilloscopePlot(QWidget):
         self.curve = self.plot_widget.plot(
             pen=pg.mkPen("#e3c84b", width=1),
         )
+        self.curve.setZValue(5)
 
         # ------------------------------------------------------------
         # NIVEL DE TRIGGER
@@ -326,6 +360,7 @@ class OscilloscopePlot(QWidget):
 
         self._create_cursors()
         self.update_scales()
+        self._update_grid()
         
         self.set_display_theme(self.display_theme)
 
