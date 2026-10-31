@@ -66,7 +66,7 @@ DEFAULT_FS = FIRMWARE_FS
 
 FRAMES_PER_BLOCK = 256
 
-RING_SIZE = 16384
+RING_SIZE = 65536
 
 USB_RX_BUFFER = 128
 
@@ -138,6 +138,8 @@ class FakeBlackPill:
             noise_dbfs / 20.0
         )
 
+        self.offset = [0.0, 0.0]
+        self.noise_channels = [self.noise, self.noise]
         self._rng = np.random.default_rng(seed)
 
         # ---------------------------------------------------------------------
@@ -832,11 +834,14 @@ class FakeBlackPill:
             if self.adc_on:
 
                 output[:, ch] += (
-                    self.noise
+                    self.noise_channels[ch]
                     * self._rng.standard_normal(
                         self.block
                     )
                 )
+
+            if self.adc_on:
+                output[:, ch] += self.offset[ch]
 
         return output
 
@@ -1003,6 +1008,9 @@ class SimulatedTransport(Transport):
             output += self.device.take(
                 n - len(output)
             )
+
+            if self.adc_on:
+                output[:, ch] += self.offset[ch]
 
         return output
 

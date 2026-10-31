@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         self.source_actions = {}
         for source, label in (
             (AcquisitionManager.AUDIO, "Audio (sounddevice)"),
-            (AcquisitionManager.SIMULATOR, "Simulador Blackpill"),
+            (AcquisitionManager.SIMULATOR, "Blackpill simulada (tramas USB)"),
             (AcquisitionManager.BLACKPILL_USB, "Blackpill USB COM"),
         ):
             action = QAction(label, self)
@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
         manager = self.oscilloscope.acquisition
         labels = {
             manager.AUDIO: "Audio (sounddevice)",
-            manager.SIMULATOR: "Simulador Blackpill",
+            manager.SIMULATOR: "Blackpill simulada (tramas USB)",
             manager.BLACKPILL_USB: "Blackpill USB COM",
         }
         states = {
@@ -255,6 +255,8 @@ class MainWindow(QMainWindow):
             f"Adquisición: {states.get(state, state)} | Vista: {view} | "
             f"Fs: {manager.sample_rate:,.2f} Hz"
         )
+        if source == manager.SIMULATOR:
+            text += " | Transporte simulado · PCM24 · CH1 · amplitud sin calibrar"
         if source == manager.BLACKPILL_USB:
             port = manager.usb_port or "automático"
             text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"

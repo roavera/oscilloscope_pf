@@ -40,7 +40,7 @@ import logging
 import numpy as np
 
 from acquisition.acquisition_buffer import AcquisitionBuffer
-from acquisition.blackpill_simulator import BlackpillSimulator
+from queue import Queue, Empty, Full
 
 
 class _USBBackend:
@@ -49,6 +49,12 @@ class _USBBackend:
     def __init__(self, *, channel="L", port=None, simulated=False,
                  transport=None, on_discontinuity=None, on_state=None, on_error=None):
         from communication.worker import BlackPillReader
+        self._settings_queue = Queue(maxsize=64)
+        self._simulated_device = None
+        if simulated and transport is None:
+            from communication.simulator import SimulatedTransport
+            transport = SimulatedTransport(max_chunk=512)
+            self._simulated_device = transport.device
         self.reader = BlackPillReader(
             channel=channel, port=port, simulated=simulated,
             transport=transport,
@@ -80,6 +86,7 @@ class _USBBackend:
                 return
             self.on_state("connected")
             while not self._stop_event.is_set():
+                self._apply_settings()
                 samples, discontinuity, offset = self.reader.read_chunk()
                 if len(samples) == 0:
                     continue
@@ -107,6 +114,59 @@ class _USBBackend:
                 self._stop_event.set()
                 if self.last_error is None:
                     self.on_state("stopped")
+
+    def configure(self, channel=0, **settings):
+        """Encola parámetros; solo el hilo lector modifica la placa simulada."""
+        if self._simulated_device is None:
+            raise RuntimeError("Esta fuente no admite configuración simulada")
+        if channel not in (0, 1):
+            raise ValueError("Canal inválido")
+        allowed = {"waveform", "frequency", "amplitude", "offset", "noise"}
+        if set(settings) - allowed:
+            raise ValueError("Parámetro de simulación desconocido")
+        settings = dict(settings)
+        if "waveform" in settings and settings["waveform"] not in (
+                "sine", "square", "triangle"):
+            raise ValueError("Forma de onda inválida")
+        for key in allowed - {"waveform"}:
+            if key not in settings:
+                continue
+            value = float(settings[key])
+            if not np.isfinite(value):
+                raise ValueError(f"{key} debe ser finito")
+            if key in ("amplitude", "noise") and value < 0:
+                raise ValueError(f"{key} debe ser no negativo")
+            if key == "frequency" and not 0 <= value < 97656.25 / 2:
+                raise ValueError("Frecuencia fuera de la banda de Nyquist")
+            settings[key] = value
+        # put_nowait evita bloquear Qt si el lector deja de responder.
+        try:
+            self._settings_queue.put_nowait((channel, settings))
+        except Full as exc:
+            raise ValueError('Demasiados cambios pendientes; intentá nuevamente') from exc
+
+    def _apply_settings(self):
+        for _ in range(64):
+            try:
+                ch, settings = self._settings_queue.get_nowait()
+            except Empty:
+                break
+            device = self._simulated_device
+            prefix = "L" if ch == 0 else "R"
+            # Estos ajustes sí recorren el protocolo de comandos del firmware.
+            if "frequency" in settings:
+                self.reader.session.send(f"{prefix}FREQ:{settings['frequency']}")
+            if "waveform" in settings:
+                wave = {"sine": 0, "square": 1, "triangle": 2}[settings["waveform"]]
+                self.reader.session.send(f"{prefix}WAVE:{wave}")
+            # Condiciones sintéticas del ADC, en unidades normalizadas.
+            # No son comandos nuevos para la placa física ni calibración del DAC.
+            if "amplitude" in settings:
+                device.amp[ch] = settings["amplitude"] * 100.0
+            if "offset" in settings:
+                device.offset[ch] = settings["offset"]
+            if "noise" in settings:
+                device.noise_channels[ch] = settings["noise"]
 
     def stop_stream(self):
         self._stop_event.set()
@@ -149,6 +209,8 @@ class AcquisitionManager:
             self.SAMPLE_RATES[self.source] if sample_rate is None else sample_rate
         )
         self._validate_rate(self.sample_rate)
+        if self.source != self.AUDIO and self.sample_rate != 97656.25:
+            raise ValueError('Blackpill requiere Fs nominal 97656.25 Hz')
         if channels not in (1, 2):
             raise ValueError("channels debe ser 1 o 2")
         if int(blocksize) <= 0:
@@ -243,6 +305,8 @@ class AcquisitionManager:
             self.SAMPLE_RATES[source] if sample_rate is None else sample_rate
         )
         self._validate_rate(new_rate)
+        if source != self.AUDIO and new_rate != 97656.25:
+            raise ValueError('Blackpill requiere Fs nominal 97656.25 Hz')
         self.stop()
         self.source = source
         self.sample_rate = new_rate
@@ -290,17 +354,12 @@ class AcquisitionManager:
             )
             # AudioInput actual siempre entrega CH1 como vector mono.
             receive = lambda x: self._ingest(x, callback, channel="L")
-        elif self.source == self.SIMULATOR:
-            backend = BlackpillSimulator(
-                sample_rate=self.sample_rate, channels=self.channels,
-                blocksize=self.blocksize,
-            )
-            receive = lambda x: self._ingest(x, callback, channel="L")
         else:
             channel = "LR" if self.channels == 2 else "L"
             backend = _USBBackend(
                 channel=channel, port=self.usb_port,
-                simulated=self.usb_simulated, transport=self.usb_transport,
+                simulated=(self.source == self.SIMULATOR or self.usb_simulated),
+                transport=(None if self.source == self.SIMULATOR else self.usb_transport),
                 on_discontinuity=self._discontinuity,
                 on_state=self._set_state, on_error=self._report_error,
             )
@@ -323,6 +382,8 @@ class AcquisitionManager:
     def configure_simulator(self, channel=0, **kwargs):
         if self.source != self.SIMULATOR or self._backend is None:
             raise RuntimeError("El simulador debe estar iniciado")
+        if not 0 <= channel < self.channels:
+            raise ValueError("Canal no adquirido")
         self._backend.configure(channel=channel, **kwargs)
 
     def stop(self):

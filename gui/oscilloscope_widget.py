@@ -323,6 +323,8 @@ class OscilloscopeWidget(QWidget):
             self.running = True
             self.controls.set_acquisition_enabled(True)
             self.display_timer.start()
+            if self.acquisition.source == AcquisitionManager.SIMULATOR:
+                self._apply_simulator_panel()
         elif state == "connecting":
             self.running = False
             self.controls.set_acquisition_enabled(False)
@@ -424,19 +426,22 @@ class OscilloscopeWidget(QWidget):
             source == AcquisitionManager.SIMULATOR
         )
         self.start_acquisition()
-        if source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
-            panel = self.controls.simulator_controls
-            self._on_simulator_settings_changed({
-                "waveform": panel.waveform.currentData(),
-                "frequency": panel.frequency.value(),
-                "amplitude": panel.amplitude.value(),
-                "offset": panel.offset.value(),
-                "noise": panel.noise.value(),
-            })
+    def _apply_simulator_panel(self):
+        panel = self.controls.simulator_controls
+        self._on_simulator_settings_changed({
+            "waveform": panel.waveform.currentData(),
+            "frequency": panel.frequency.value(),
+            "amplitude": panel.amplitude.value(),
+            "offset": panel.offset.value(),
+            "noise": panel.noise.value(),
+        })
 
     def _on_simulator_settings_changed(self, settings):
         if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
-            self.configure_simulator(channel=0, **settings)
+            try:
+                self.configure_simulator(channel=0, **settings)
+            except (ValueError, RuntimeError) as exc:
+                self.acquisition_error.emit(str(exc))
 
     def configure_simulator(self, channel=0, **kwargs):
         """Actualiza la señal simulada sin reiniciar la adquisición."""
