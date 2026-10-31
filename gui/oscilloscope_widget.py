@@ -155,8 +155,7 @@ class OscilloscopeWidget(QWidget):
         self.display_timer.timeout.connect(self.process_data)
 
         self.controls.sync_settings(self)
-        self.controls.simulator_controls.setVisible(False)
-
+        self.controls.set_simulator_visible(False)
         self.set_vertical_position(
             self.vertical_position_divisions
         )
@@ -469,7 +468,8 @@ class OscilloscopeWidget(QWidget):
             raise ValueError("Frecuencia de muestreo inválida")
         self.disconnect_acquisition()
         self.acquisition.change_source(source, rate)
-        self.controls.simulator_controls.setVisible(
+        
+        self.controls.set_simulator_visible(
             source == AcquisitionManager.SIMULATOR
         )
         self.start_acquisition()
