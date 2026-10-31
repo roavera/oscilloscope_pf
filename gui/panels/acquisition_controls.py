@@ -1,368 +1,181 @@
+"""Controles compactos de adquisición para el panel frontal LeCroy.
 
-"""Panel de adquisición: modos, interpolación y RUN/STOP."""
+Mantiene la API y los identificadores internos utilizados por el controlador.
+Los ajustes avanzados se muestran en un diálogo no modal.
+"""
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import (
-    QGroupBox,
-    QHBoxLayout,
-    QVBoxLayout,
-    QFormLayout,
-    QPushButton,
-    QLabel,
-    QComboBox,
-    QFrame,
+    QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 
 class AcquisitionControls(QGroupBox):
-    """Panel de configuración y operación de adquisición."""
-
-    # Señales de operación
     run_clicked = Signal()
     stop_clicked = Signal()
-
-    # Señales de configuración
     mode_changed = Signal(str)
     interpolation_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__("Adquisición", parent)
-
         self._running = False
         self._actions_enabled = True
-
         self.create_interface()
         self.connect_signals()
-
         self._update_buttons()
-
-    # ============================================================
-    # INTERFAZ
-    # ============================================================
 
     def create_interface(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 16, 12, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(8, 10, 8, 8)
+        layout.setSpacing(6)
 
-        # ========================================================
-        # CONFIGURACIÓN DE ADQUISICIÓN
-        # ========================================================
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+        self.run_button = QPushButton("▶ RUN")
+        self.stop_button = QPushButton("■ STOP")
+        self.settings_button = QPushButton("ADQUISICIÓN")
+        self.settings_button.setToolTip("Configurar modo de adquisición e interpolación")
 
-        settings_layout = QFormLayout()
-        settings_layout.setSpacing(10)
+        self.run_button.setStyleSheet("""
+            QPushButton {background:#198754;color:white;border:0;border-radius:5px;
+                         font-weight:bold;padding:7px 8px;}
+            QPushButton:hover:enabled {background:#157347;}
+            QPushButton:disabled {background:#344d40;color:#8fa99a;}
+        """)
+        self.stop_button.setStyleSheet("""
+            QPushButton {background:#dc3545;color:white;border:0;border-radius:5px;
+                         font-weight:bold;padding:7px 8px;}
+            QPushButton:hover:enabled {background:#bb2d3b;}
+            QPushButton:disabled {background:#57383d;color:#b09a9d;}
+        """)
+        self.settings_button.setStyleSheet("""
+            QPushButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
+                         border-radius:5px;font-weight:bold;padding:7px 6px;}
+            QPushButton:hover:enabled {background:#465d76;}
+        """)
+        for button in (self.run_button, self.stop_button, self.settings_button):
+            button.setMinimumHeight(34)
+            buttons.addWidget(button, 1)
+        layout.addLayout(buttons)
 
-        # --------------------------------------------------------
-        # MODO DE ADQUISICIÓN
-        # --------------------------------------------------------
+        self.status_label = QLabel("STOP")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        # Se crea una sola vez: los combos conservan estado y conexiones.
+        self.settings_dialog = QDialog(self)
+        self.settings_dialog.setWindowTitle("Configuración de adquisición")
+        self.settings_dialog.setModal(False)
+        self.settings_dialog.setMinimumWidth(330)
+        dialog_layout = QVBoxLayout(self.settings_dialog)
+        form = QFormLayout()
 
         self.mode_combo = QComboBox()
-
-        modes = [
-            ("Sampling", "sampling"),
-            ("Peak Detect", "peak_detect"),
-            ("Average", "average"),
-            ("High Resolution", "high_resolution"),
-            ("Envelope", "envelope"),
-        ]
-
+        modes = (
+            ("Muestreo", "sampling"),
+            ("Detección de picos", "peak_detect"),
+            ("Promediado", "average"),
+            ("Alta resolución", "high_resolution"),
+            ("Envolvente", "envelope"),
+        )
         for label, value in modes:
             self.mode_combo.addItem(label, value)
-
-        # Solo Sampling está disponible inicialmente.
         for index in range(1, self.mode_combo.count()):
             self.mode_combo.model().item(index).setEnabled(False)
-
         self.mode_combo.setCurrentIndex(0)
-
-        self.mode_combo.setToolTip(
-            "Selecciona cómo se procesan las muestras adquiridas."
-        )
-
-        settings_layout.addRow(
-            "Modo:",
-            self.mode_combo,
-        )
-
-        # --------------------------------------------------------
-        # INTERPOLACIÓN VISUAL
-        # --------------------------------------------------------
+        self.mode_combo.setToolTip("Procesamiento de las muestras adquiridas")
 
         self.interpolation_combo = QComboBox()
-
-        interpolation_methods = [
+        interpolations = (
             ("Puntos", "none"),
             ("Lineal", "linear"),
             ("Cúbica", "cubic"),
             ("Sinc (sin x/x)", "sinc"),
-        ]
-
-        for label, value in interpolation_methods:
+        )
+        for label, value in interpolations:
             self.interpolation_combo.addItem(label, value)
-
-        # La visualización actual utiliza segmentos lineales.
-        # Las demás opciones se habilitarán al implementar
-        # los algoritmos correspondientes.
         for index in (0, 2, 3):
             self.interpolation_combo.model().item(index).setEnabled(False)
-
         self.interpolation_combo.setCurrentIndex(1)
+        self.interpolation_combo.setToolTip("Representación visual entre muestras")
 
-        self.interpolation_combo.setToolTip(
-            "Selecciona cómo se representa la señal entre muestras."
-        )
-
-        settings_layout.addRow(
-            "Interpolación:",
-            self.interpolation_combo,
-        )
-
-        layout.addLayout(settings_layout)
-
-        # ========================================================
-        # SEPARADOR
-        # ========================================================
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-
-        layout.addWidget(separator)
-
-        # ========================================================
-        # ESTADO DE ADQUISICIÓN
-        # ========================================================
-
-        status_layout = QHBoxLayout()
-
-        status_title = QLabel("Estado:")
-        self.status_label = QLabel("STOP")
-        self.status_label.setWordWrap(True)
-
-        status_layout.addWidget(status_title)
-        status_layout.addWidget(self.status_label, 1)
-
-        layout.addLayout(status_layout)
-
-        # ========================================================
-        # BOTONES RUN Y STOP
-        # ========================================================
-
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(8)
-
-        self.run_button = QPushButton("▶ RUN")
-        self.stop_button = QPushButton("■ STOP")
-
-        for button in (
-            self.run_button,
-            self.stop_button,
-        ):
-            button.setMinimumHeight(40)
-            button.setMinimumWidth(100)
-
-        # --------------------------------------------------------
-        # ESTILO RUN - VERDE
-        # --------------------------------------------------------
-
-        self.run_button.setStyleSheet("""
-            QPushButton {
-                background-color: #198754;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: bold;
-                padding: 8px 14px;
-            }
-
-            QPushButton:hover:enabled {
-                background-color: #157347;
-            }
-
-            QPushButton:pressed:enabled {
-                background-color: #0f5132;
-            }
-
-            QPushButton:disabled {
-                background-color: #344d40;
-                color: #8fa99a;
-            }
-        """)
-
-        # --------------------------------------------------------
-        # ESTILO STOP - ROJO
-        # --------------------------------------------------------
-
-        self.stop_button.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: bold;
-                padding: 8px 14px;
-            }
-
-            QPushButton:hover:enabled {
-                background-color: #bb2d3b;
-            }
-
-            QPushButton:pressed:enabled {
-                background-color: #842029;
-            }
-
-            QPushButton:disabled {
-                background-color: #57383d;
-                color: #b09a9d;
-            }
-        """)
-
-        buttons_layout.addWidget(self.run_button)
-        buttons_layout.addWidget(self.stop_button)
-
-        layout.addLayout(buttons_layout)
-
-    # ============================================================
-    # CONEXIÓN DE SEÑALES
-    # ============================================================
+        form.addRow("Modo:", self.mode_combo)
+        form.addRow("Interpolación:", self.interpolation_combo)
+        dialog_layout.addLayout(form)
+        note = QLabel("Las opciones no implementadas permanecen deshabilitadas.")
+        note.setWordWrap(True)
+        dialog_layout.addWidget(note)
+        close_button = QPushButton("Cerrar")
+        close_button.clicked.connect(self.settings_dialog.hide)
+        dialog_layout.addWidget(close_button)
 
     def connect_signals(self):
-        # RUN
-        self.run_button.clicked.connect(
-            self.run_clicked.emit
-        )
+        self.run_button.clicked.connect(self.run_clicked.emit)
+        self.stop_button.clicked.connect(self.stop_clicked.emit)
+        self.settings_button.clicked.connect(self.settings_dialog.show)
+        self.mode_combo.currentIndexChanged.connect(self._emit_mode)
+        self.interpolation_combo.currentIndexChanged.connect(self._emit_interpolation)
 
-        # STOP
-        self.stop_button.clicked.connect(
-            self.stop_clicked.emit
-        )
+    def _emit_mode(self, _index):
+        value = self.mode_combo.currentData()
+        if value is not None:
+            self.mode_changed.emit(str(value))
 
-        # Modo de adquisición
-        self.mode_combo.currentIndexChanged.connect(
-            lambda _: self.mode_changed.emit(
-                self.mode_combo.currentData()
-            )
-        )
-
-        # Interpolación visual
-        self.interpolation_combo.currentIndexChanged.connect(
-            lambda _: self.interpolation_changed.emit(
-                self.interpolation_combo.currentData()
-            )
-        )
-
-    # ============================================================
-    # ESTADO DE ADQUISICIÓN
-    # ============================================================
+    def _emit_interpolation(self, _index):
+        value = self.interpolation_combo.currentData()
+        if value is not None:
+            self.interpolation_changed.emit(str(value))
 
     def show_state(self, running, status, error=None):
-        """Actualiza el indicador y los botones."""
-
         self._running = bool(running)
-
-        self.status_label.setText(
-            f"{status}: {error}" if error else status
-        )
-
+        self.status_label.setText(f"{status}: {error}" if error else str(status))
         self.status_label.setToolTip(error or "")
-
         self._update_buttons()
 
     def set_actions_enabled(self, enabled):
-        """Habilita o deshabilita los controles de operación."""
-
         self._actions_enabled = bool(enabled)
         self._update_buttons()
 
     def _update_buttons(self):
-        """Sincroniza RUN y STOP con el estado de adquisición."""
+        self.run_button.setEnabled(self._actions_enabled and not self._running)
+        self.stop_button.setEnabled(self._actions_enabled and self._running)
 
-        enabled = self._actions_enabled
-
-        self.run_button.setEnabled(
-            enabled and not self._running
-        )
-
-        self.stop_button.setEnabled(
-            enabled and self._running
-        )
-
-    # ============================================================
-    # MODOS DE ADQUISICIÓN
-    # ============================================================
+    @staticmethod
+    def _index_for(combo, value, category):
+        index = combo.findData(value)
+        if index < 0:
+            raise ValueError(f"{category} desconocido: {value}")
+        return index
 
     def set_mode(self, mode):
-        """Selecciona un modo de adquisición habilitado."""
-
-        index = self.mode_combo.findData(mode)
-
-        if index < 0:
-            raise ValueError(
-                f"Modo de adquisición desconocido: {mode}"
-            )
-
+        index = self._index_for(self.mode_combo, mode, "Modo de adquisición")
         if not self.mode_combo.model().item(index).isEnabled():
-            raise ValueError(
-                f"Modo de adquisición no disponible: {mode}"
-            )
-
-        self.mode_combo.setCurrentIndex(index)
+            raise ValueError(f"Modo de adquisición no disponible: {mode}")
+        blocker = QSignalBlocker(self.mode_combo)
+        try:
+            self.mode_combo.setCurrentIndex(index)
+        finally:
+            del blocker
 
     def enable_mode(self, mode, enabled=True):
-        """Habilita un modo cuando su algoritmo esté implementado."""
-
-        index = self.mode_combo.findData(mode)
-
-        if index < 0:
-            raise ValueError(
-                f"Modo de adquisición desconocido: {mode}"
-            )
-
+        index = self._index_for(self.mode_combo, mode, "Modo de adquisición")
         if not enabled and self.mode_combo.currentIndex() == index:
-            raise ValueError(
-                "No se puede deshabilitar el modo seleccionado."
-            )
-
-        self.mode_combo.model().item(index).setEnabled(
-            bool(enabled)
-        )
-
-    # ============================================================
-    # INTERPOLACIÓN
-    # ============================================================
+            raise ValueError("No se puede deshabilitar el modo seleccionado.")
+        self.mode_combo.model().item(index).setEnabled(bool(enabled))
 
     def set_interpolation(self, interpolation):
-        """Selecciona un método de interpolación habilitado."""
-
-        index = self.interpolation_combo.findData(interpolation)
-
-        if index < 0:
-            raise ValueError(
-                f"Interpolación desconocida: {interpolation}"
-            )
-
+        index = self._index_for(self.interpolation_combo, interpolation, "Interpolación")
         if not self.interpolation_combo.model().item(index).isEnabled():
-            raise ValueError(
-                f"Interpolación no disponible: {interpolation}"
-            )
-
-        self.interpolation_combo.setCurrentIndex(index)
+            raise ValueError(f"Interpolación no disponible: {interpolation}")
+        blocker = QSignalBlocker(self.interpolation_combo)
+        try:
+            self.interpolation_combo.setCurrentIndex(index)
+        finally:
+            del blocker
 
     def enable_interpolation(self, interpolation, enabled=True):
-        """Habilita una interpolación implementada."""
-
-        index = self.interpolation_combo.findData(interpolation)
-
-        if index < 0:
-            raise ValueError(
-                f"Interpolación desconocida: {interpolation}"
-            )
-
+        index = self._index_for(self.interpolation_combo, interpolation, "Interpolación")
         if not enabled and self.interpolation_combo.currentIndex() == index:
-            raise ValueError(
-                "No se puede deshabilitar la interpolación seleccionada."
-            )
-
-        self.interpolation_combo.model().item(index).setEnabled(
-            bool(enabled)
-        )
+            raise ValueError("No se puede deshabilitar la interpolación seleccionada.")
+        self.interpolation_combo.model().item(index).setEnabled(bool(enabled))

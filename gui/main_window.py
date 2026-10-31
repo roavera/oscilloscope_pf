@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
 from acquisition.acquisition_manager import AcquisitionManager
 from .oscilloscope_widget import OscilloscopeWidget
 from .theme.theme_manager import ThemeManager
-from .widgets.oscilloscope_toolbar import OscilloscopeToolbar
 from .widgets.welcome_page import WelcomePage
 
 class PortDialog(QDialog):
@@ -131,20 +130,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 6)
         layout.setSpacing(8)
 
-        header = QHBoxLayout()
-        self.home_button = QPushButton("⌂  Inicio", self.scope_page)
-        self.home_button.setToolTip("Volver a la pantalla de bienvenida")
-        header.addWidget(self.home_button)
-        title = QLabel("Osciloscopio de Audio")
-        title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        header.addWidget(title)
-        header.addStretch(1)
-        layout.addLayout(header)
-
-        self.toolbar = OscilloscopeToolbar(self.scope_page)
-        layout.addWidget(self.toolbar, 0)
-
         self.oscilloscope = OscilloscopeWidget()
         self.oscilloscope.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -155,12 +140,13 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.welcome_page)
 
         self.welcome_page.start_requested.connect(self._open_oscilloscope)
-        self.home_button.clicked.connect(self._show_welcome)
         self._page_animation = None
 
-        self.toolbar.run_stop_clicked.connect(self.oscilloscope.toggle_run_stop)
-        self.toolbar.single_clicked.connect(self.oscilloscope.single)
-        self.toolbar.cursors_clicked.connect(self._toggle_cursors)
+        # Inicio comparte la barra superior con los menús.
+        self.home_action = QAction("⌂ Inicio", self)
+        self.home_action.setToolTip("Volver a la pantalla de bienvenida")
+        self.home_action.triggered.connect(self._show_welcome)
+        self.menuBar().addAction(self.home_action)
 
         self._create_acquisition_menu()
         self.oscilloscope.acquisition_state_changed.connect(
@@ -169,8 +155,8 @@ class MainWindow(QMainWindow):
         self.oscilloscope.acquisition_error.connect(self._show_error)
         
         self._create_appearance_menu()
-        
         self._create_display_menu()
+        self._create_cursors_menu()
 
         # También refleja RUN/STOP, que no cambia el estado del enlace.
         self.status_timer = QTimer(self)
@@ -217,6 +203,13 @@ class MainWindow(QMainWindow):
         cursor.mode.setCurrentText(
             "Off" if cursor.mode.currentText() != "Off" else "Manual"
         )
+
+    def _create_cursors_menu(self):
+        """Acceso a cursores sin ocupar espacio sobre el display."""
+        menu = self.menuBar().addMenu("Cursores")
+        toggle_action = QAction("Activar / desactivar cursores", self)
+        toggle_action.triggered.connect(self._toggle_cursors)
+        menu.addAction(toggle_action)
 
     def _create_appearance_menu(self):
         menu = self.menuBar().addMenu("Apariencia")
@@ -535,15 +528,6 @@ class MainWindow(QMainWindow):
         if source == manager.BLACKPILL_USB:
             port = manager.usb_port or "automático"
             text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"
-        self.toolbar.update_state(
-            running=self.oscilloscope.running,
-            state=state,
-            source={
-                manager.AUDIO: "Audio",
-                manager.SIMULATOR: "Simulador",
-                manager.BLACKPILL_USB: "Blackpill USB",
-            }.get(source, str(source)),
-        )
         self.statusBar().showMessage(text)
 
     def closeEvent(self, event):

@@ -1,8 +1,11 @@
-
-"""Paneles de control organizados en secciones plegables."""
+"""Panel frontal del osciloscopio, inspirado en LeCroy."""
 
 from PySide6.QtCore import Signal, QSettings
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy, QPushButton,
+    QButtonGroup, QStackedWidget, QLabel, QFrame,
+)
+from PySide6.QtCore import Qt
 
 from gui.panels.vertical_controls import VerticalControls
 from gui.panels.horizontal_controls import HorizontalControls
@@ -10,7 +13,6 @@ from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
 from gui.panels.simulator_controls import SimulatorControls
 from gui.widgets.cursor_controls import CursorControls
-from gui.widgets.collapsible_section import CollapsibleSection
 
 
 class OscilloscopeControls(QWidget):
@@ -69,75 +71,21 @@ class OscilloscopeControls(QWidget):
         self.connect_signals()
 
     # ============================================================
-    # SECCIONES PLEGABLES
-    # ============================================================
-
-    def _add_section(
-        self,
-        layout,
-        key,
-        title,
-        widget,
-        default=True,
-    ):
-        """Agrega una sección y conserva su estado expandido."""
-
-        expanded = self.settings.value(
-            f"controls/expanded/{key}",
-            default,
-            type=bool,
-        )
-
-        section = CollapsibleSection(
-            title,
-            widget,
-            expanded=expanded,
-            parent=self,
-        )
-
-        section.toggled.connect(
-            lambda value, section_key=key: self.settings.setValue(
-                f"controls/expanded/{section_key}",
-                value,
-            )
-        )
-
-        layout.addWidget(section)
-        self.sections[key] = section
-
-        return section
-
-    # ============================================================
-    # INTERFAZ
+    # INTERFAZ TIPO OSCILOSCOPIO FÍSICO
     # ============================================================
 
     def create_interface(self):
+        """Navegación lateral sin cambiar el ancho del display."""
         layout = QVBoxLayout(self)
-
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # --------------------------------------------------------
-        # CREACIÓN DE PANELES
-        # --------------------------------------------------------
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(7)
 
         self.acquisition_controls = AcquisitionControls()
-
-        self.ch1_controls = VerticalControls(
-            channel="CH1"
-        )
-
+        self.ch1_controls = VerticalControls(channel="CH1")
         self.horizontal_controls = HorizontalControls()
-
         self.trigger_controls = TriggerControls()
-
         self.cursor_controls = CursorControls()
-
         self.simulator_controls = SimulatorControls()
-
-        # --------------------------------------------------------
-        # POLÍTICAS DE TAMAÑO
-        # --------------------------------------------------------
 
         for panel in (
             self.acquisition_controls,
@@ -152,86 +100,126 @@ class OscilloscopeControls(QWidget):
                 QSizePolicy.Policy.Preferred,
             )
 
-        # --------------------------------------------------------
-        # ADQUISICIÓN
-        # --------------------------------------------------------
+        # Barra de navegación, siempre por encima de Adquisición.
+        nav = QHBoxLayout()
+        nav.setContentsMargins(0, 0, 0, 0)
+        nav.setSpacing(4)
+        self.navigation_group = QButtonGroup(self)
+        self.navigation_group.setExclusive(True)
+        self.navigation_buttons = {}
 
-        self._add_section(
-            layout,
-            "acquisition",
-            "Adquisición",
-            self.acquisition_controls,
+        for key, title in (
+            ("controls", "CONTROLES"),
+            ("measurements", "MEDICIONES"),
+            ("cursors", "CURSORES"),
+            ("simulator", "SIMULADOR"),
+        ):
+            button = QPushButton(title, self)
+            button.setCheckable(True)
+            button.setMinimumHeight(30)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Fixed,
+            )
+            button.setStyleSheet("""
+                QPushButton {
+                    background: #283648;
+                    color: #e5edf7;
+                    border: 1px solid #3e5066;
+                    border-radius: 4px;
+                    padding: 5px 2px;
+                    font-size: 10px;
+                    font-weight: 600;
+                }
+                QPushButton:checked { background: #496488; }
+                QPushButton:hover { background: #3b506b; }
+            """)
+            self.navigation_group.addButton(button)
+            self.navigation_buttons[key] = button
+            nav.addWidget(button, 1)
+
+        layout.addLayout(nav)
+
+        # RUN/STOP y el acceso a configuración siempre visibles.
+        layout.addWidget(self.acquisition_controls)
+
+        self.pages = QStackedWidget(self)
+        self.pages.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
         )
 
-        # --------------------------------------------------------
-        # VERTICAL
-        # --------------------------------------------------------
+        # Página 0: controles físicos existentes.
+        controls_page = QWidget()
+        controls_layout = QVBoxLayout(controls_page)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(7)
+        upper_row = QHBoxLayout()
+        upper_row.setSpacing(7)
+        upper_row.addWidget(self.horizontal_controls, 1)
+        upper_row.addWidget(self.trigger_controls, 1)
+        controls_layout.addLayout(upper_row)
+        controls_layout.addWidget(self.ch1_controls)
+        controls_layout.addStretch(1)
+        self.pages.addWidget(controls_page)
 
-        self._add_section(
-            layout,
-            "vertical",
-            "Vertical — CH1",
-            self.ch1_controls,
+        # Página 1: espacio reservado para mediciones automáticas.
+        measurements_page = QWidget()
+        measurements_layout = QVBoxLayout(measurements_page)
+        measurements_layout.setContentsMargins(8, 12, 8, 8)
+        measurements_title = QLabel("Mediciones automáticas · CH1")
+        measurements_title.setStyleSheet("font-weight: bold;")
+        measurements_layout.addWidget(measurements_title)
+        measurements_note = QLabel(
+            "Próximamente: frecuencia, período, RMS y Vpp.\n"
+            "Todavía no se calculan ni se muestran valores ficticios."
         )
+        measurements_note.setWordWrap(True)
+        measurements_layout.addWidget(measurements_note)
+        measurements_layout.addStretch(1)
+        self.pages.addWidget(measurements_page)
 
-        # --------------------------------------------------------
-        # HORIZONTAL
-        # --------------------------------------------------------
+        # Página 2: reutiliza el panel de cursores original.
+        cursors_page = QWidget()
+        cursors_layout = QVBoxLayout(cursors_page)
+        cursors_layout.setContentsMargins(0, 0, 0, 0)
+        self.cursor_section = self.cursor_controls
+        cursors_layout.addWidget(self.cursor_section)
+        cursors_layout.addStretch(1)
+        self.pages.addWidget(cursors_page)
 
-        self._add_section(
-            layout,
-            "horizontal",
-            "Horizontal",
-            self.horizontal_controls,
-        )
+        # Página 3: se habilita solo al seleccionar la fuente simulador.
+        simulator_page = QWidget()
+        simulator_layout = QVBoxLayout(simulator_page)
+        simulator_layout.setContentsMargins(0, 0, 0, 0)
+        self.simulator_section = self.simulator_controls
+        simulator_layout.addWidget(self.simulator_section)
+        simulator_layout.addStretch(1)
+        self.pages.addWidget(simulator_page)
 
-        # --------------------------------------------------------
-        # TRIGGER
-        # --------------------------------------------------------
+        for index, key in enumerate(
+            ("controls", "measurements", "cursors", "simulator")
+        ):
+            self.navigation_buttons[key].clicked.connect(
+                lambda _checked=False, i=index: self.pages.setCurrentIndex(i)
+            )
 
-        self._add_section(
-            layout,
-            "trigger",
-            "Trigger",
-            self.trigger_controls,
-        )
-
-        # --------------------------------------------------------
-        # CURSORES
-        # --------------------------------------------------------
-
-        self.cursor_section = self._add_section(
-            layout,
-            "cursors",
-            "Cursores — CH1",
-            self.cursor_controls,
-            default=False,
-        )
-
-        # --------------------------------------------------------
-        # SIMULADOR
-        # --------------------------------------------------------
-
-        self.simulator_section = self._add_section(
-            layout,
-            "simulator",
-            "Generador simulado",
-            self.simulator_controls,
-            default=False,
-        )
-
-        self.simulator_section.setVisible(False)
-
-        layout.addStretch(1)
+        self.navigation_buttons["controls"].setChecked(True)
+        self.navigation_buttons["simulator"].setVisible(False)
+        self.pages.setCurrentIndex(0)
+        layout.addWidget(self.pages)
 
     # ============================================================
     # VISIBILIDAD DEL SIMULADOR
     # ============================================================
 
     def set_simulator_visible(self, visible):
-        self.simulator_section.setVisible(
-            bool(visible)
-        )
+        """Habilita la pestaña del simulador sin destruir sus controles."""
+        visible = bool(visible)
+        self.navigation_buttons["simulator"].setVisible(visible)
+        if not visible and self.pages.currentIndex() == 3:
+            self.navigation_buttons["controls"].setChecked(True)
+            self.pages.setCurrentIndex(0)
 
     # ============================================================
     # CONEXIONES DE SEÑALES
