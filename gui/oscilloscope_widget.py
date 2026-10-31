@@ -304,9 +304,8 @@ class OscilloscopeWidget(QWidget):
         )
 
         # Adquisición.
-        self.controls.run_stop_clicked.connect(
-            self.toggle_run_stop
-        )
+        self.controls.run_clicked.connect(self.run)
+        self.controls.stop_clicked.connect(self.stop)
 
         self.controls.single_clicked.connect(
             self.single
@@ -864,6 +863,43 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
     # RUN / STOP Y SINGLE
     # ================================================================
+    
+    def run(self):
+        """Inicia o reanuda la visualización del osciloscopio."""
+
+        if self._closed or self.acquisition.is_connecting:
+            return
+
+        # Si la fuente está detenida o hubo un error,
+        # intenta iniciar nuevamente la adquisición.
+        if self._audio_error is not None or not self.acquisition.is_running:
+            self.start_acquisition()
+            return
+
+        # Si ya está ejecutándose, no hacemos nada.
+        if self.running:
+            return
+
+        # Si está seleccionado Single, arma una nueva captura.
+        if self.trigger_mode == "Single":
+            self.single()
+            return
+
+        self.running = True
+        self.trigger_found = False
+
+        self.update_controls_state()
+
+    def stop(self):
+        """Congela la pantalla sin desconectar la fuente de datos."""
+
+        if self._closed or not self.running:
+            return
+
+        self.running = False
+
+        self.update_controls_state()
+
 
     def toggle_run_stop(self):
         if self._closed or self.acquisition.is_connecting:

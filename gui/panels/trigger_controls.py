@@ -1,4 +1,5 @@
-"""Controles de modo, pendiente y nivel de trigger."""
+
+"""Controles de modo, pendiente, nivel y captura SINGLE."""
 
 from math import isfinite
 
@@ -24,6 +25,7 @@ class TriggerControls(QGroupBox):
     level_changed = Signal(float)
     slope_changed = Signal(str)
     mode_changed = Signal(str)
+    single_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Trigger", parent)
@@ -31,7 +33,6 @@ class TriggerControls(QGroupBox):
         self._level = 0.0
 
         # Rango inicial: 8 divisiones a 20 mV/div.
-        # El controlador lo actualiza según la escala del gráfico.
         self._visible_min = -0.08
         self._visible_max = 0.08
 
@@ -48,7 +49,7 @@ class TriggerControls(QGroupBox):
         layout.setSpacing(8)
 
         # ------------------------------------------------------------
-        # MODO
+        # MODO DE TRIGGER
         # ------------------------------------------------------------
 
         self.mode_combo = self._combo(
@@ -57,7 +58,6 @@ class TriggerControls(QGroupBox):
             (
                 ("Auto", "Auto"),
                 ("Normal", "Normal"),
-                ("Single", "Single"),
             ),
         )
 
@@ -131,6 +131,46 @@ class TriggerControls(QGroupBox):
         layout.addWidget(self.zero_button)
         layout.addWidget(self.range_label)
 
+        # ------------------------------------------------------------
+        # BOTÓN SINGLE
+        # ------------------------------------------------------------
+
+        layout.addSpacing(12)
+
+        self.single_button = QPushButton("SINGLE")
+        self.single_button.setMinimumHeight(40)
+
+        self.single_button.setToolTip(
+            "Espera un disparo válido, captura una vez "
+            "y congela la pantalla."
+        )
+
+        self.single_button.setStyleSheet("""
+            QPushButton {
+                background-color: #805ad5;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                padding: 8px 14px;
+            }
+
+            QPushButton:hover:enabled {
+                background-color: #6b46c1;
+            }
+
+            QPushButton:pressed:enabled {
+                background-color: #553c9a;
+            }
+
+            QPushButton:disabled {
+                background-color: #454052;
+                color: #9992a8;
+            }
+        """)
+
+        layout.addWidget(self.single_button)
+
     # ================================================================
     # CONEXIÓN DE SEÑALES
     # ================================================================
@@ -152,9 +192,11 @@ class TriggerControls(QGroupBox):
             self._emit_mode_change
         )
 
+        self.single_button.clicked.connect(
+            self.single_clicked.emit
+        )
+
     def _emit_level_change(self, value):
-        # El controlador recibe el valor y lo devuelve mediante
-        # set_level(), sincronizando perilla, lectura y gráfico.
         self.level_changed.emit(float(value))
 
     def _emit_slope_change(self, _index):
@@ -260,8 +302,6 @@ class TriggerControls(QGroupBox):
             value=self._level,
         )
 
-        # La lectura muestra el nivel real del controlador.
-        # No reemplaza ese nivel por el valor discretizado del dial.
         self.level_label.setText(
             f"{self._level:+.6g} V"
         )
@@ -294,6 +334,12 @@ class TriggerControls(QGroupBox):
         )
 
     def set_mode(self, value):
+        # El controlador utiliza "Single" internamente.
+        # El botón SINGLE representa ese estado, por lo que
+        # no necesitamos agregarlo al selector.
+        if value == "Single":
+            return
+
         self._select(
             self.mode_combo,
             value,
