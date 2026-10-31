@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.acquisition_buffer import AcquisitionBuffer
+from acquisition.acquisition_processor import AcquisitionProcessor
 from trigger.edge_trigger import Edge_Trigger
 
 from gui.controls import OscilloscopeControls
@@ -117,6 +118,10 @@ class OscilloscopeWidget(QWidget):
         # ============================================================
 
         self.buffer = AcquisitionBuffer(self.sample_rate)
+        
+        # Procesador de modos de adquisición
+        self.acquisition_processor = AcquisitionProcessor()
+        self.acquisition_processor.set_mode("sampling")
 
         self.acquisition = AcquisitionManager(
             source=AcquisitionManager.AUDIO,
@@ -307,11 +312,28 @@ class OscilloscopeWidget(QWidget):
         self.controls.single_clicked.connect(
             self.single
         )
+        
+        # Selector de modos de adquisición
+        self.controls.acquisition_mode_changed.connect(
+            self.set_acquisition_mode
+        )
+
 
     # ================================================================
     # ADQUISICIÓN
     # ================================================================
 
+    def set_acquisition_mode(self, mode):
+        """Selecciona el algoritmo de adquisición."""
+
+        if mode != "sampling":
+            return
+
+        self.acquisition_processor.set_mode(mode)
+
+        # Actualizar la pantalla con el modo seleccionado.
+        self._redraw_last_acquisition()
+    
     def start_acquisition(self):
         """Solicita el arranque; USB confirma la conexión mediante señales."""
         if self._closed or self.acquisition.is_connecting or self.acquisition.is_running:
@@ -416,6 +438,7 @@ class OscilloscopeWidget(QWidget):
         self._last_trigger_index = None
         self._last_fractional_offset = 0.0
         self.plot.clear_signal()
+        self.acquisition_processor.reset()
 
     def disconnect_acquisition(self):
         """Cierra la fuente; invalida los avisos pendientes del lector anterior."""
@@ -615,12 +638,36 @@ class OscilloscopeWidget(QWidget):
         self.update_controls_state()
 
     def _show_acquisition(self, acquisition, trigger_sample=None):
-        self.last_acquisition = acquisition
+        """
+        Procesa y representa una captura del osciloscopio.
+
+        El trigger ya seleccionó la ventana temporal.
+        El procesador aplica el modo de adquisición activo.
+        """
+
+        processed = self.acquisition_processor.process(
+            acquisition,
+            channel=1,
+        )
+
+        self.last_acquisition = processed
 
         self.plot.set_signal(
-            acquisition,
+            processed,
             self.sample_rate,
             trigger_sample=trigger_sample,
+        )
+        
+        processed = self.acquisition_processor.process(
+            acquisition,
+            channel=1,
+        )
+
+        print(
+            f"Modo: {self.acquisition_processor.get_mode()} | "
+            f"Entrada: {len(acquisition)} | "
+            f"Salida: {len(processed)} | "
+            f"Sin cambios: {np.array_equal(acquisition, processed)}"
         )
 
     def _redraw_last_acquisition(self):

@@ -1,0 +1,366 @@
+
+"""
+===============================================================================
+PROCESADOR DE ADQUISICIÓN
+===============================================================================
+Proyecto: Osciloscopio de Audio en Python
+
+Responsabilidades:
+    - Seleccionar el modo de adquisición.
+    - Validar y administrar la configuración.
+    - Coordinar el procesamiento por canal.
+    - Reiniciar los estados cuando cambia la configuración.
+    - Permitir incorporar los algoritmos de adquisición por separado.
+
+Modos:
+    sampling
+    peak_detect
+    average
+    envelope
+    fastact
+    high_resolution
+    roll
+
+NOTA:
+    Sampling está implementado.
+    Los demás modos se incorporarán progresivamente.
+    FastAct y Roll requieren integración con la actualización de pantalla.
+===============================================================================
+"""
+
+from dataclasses import dataclass, replace
+
+import numpy as np
+
+from acquisition.modes.sampling import process_sampling
+
+@dataclass
+class AcquisitionConfig:
+    """Configuración de los modos de adquisición."""
+
+    mode: str = "sampling"
+
+    # Cantidad de adquisiciones para Average.
+    average_count: int = 16
+
+    # Cantidad de adquisiciones para Envelope.
+    envelope_count: int = 16
+
+    # Cantidad de muestras por intervalo en Peak Detect.
+    peak_bucket_size: int = 4
+
+    # Factor de combinación para Hi-Res.
+    high_resolution_factor: int = 4
+
+
+class AcquisitionProcessor:
+    """Coordinador de los modos de adquisición."""
+
+    SAMPLING = "sampling"
+    PEAK_DETECT = "peak_detect"
+    AVERAGE = "average"
+    ENVELOPE = "envelope"
+    FASTACT = "fastact"
+    HIGH_RESOLUTION = "high_resolution"
+    ROLL = "roll"
+
+    MODES = (
+        SAMPLING,
+        PEAK_DETECT,
+        AVERAGE,
+        ENVELOPE,
+        FASTACT,
+        HIGH_RESOLUTION,
+        ROLL,
+    )
+
+    AVERAGE_OPTIONS = (4, 16, 32, 64, 128, 256)
+
+    DISPLAY_MODES = (FASTACT, ROLL)
+
+    def __init__(self, config=None):
+        self.config = (
+            replace(config)
+            if config is not None
+            else AcquisitionConfig()
+        )
+
+        self._validate_config(self.config)
+
+        # Estado independiente para CH1 y CH2.
+        self._states = {}
+
+        # Algoritmos registrados.
+        self._processors = {
+            self.SAMPLING: process_sampling,
+        }
+    # ============================================================
+    # VALIDACIÓN
+    # ============================================================
+
+    @staticmethod
+    def _positive_integer(value):
+        return (
+            isinstance(value, (int, np.integer))
+            and not isinstance(value, (bool, np.bool_))
+            and value > 0
+        )
+
+    def _validate_config(self, config):
+
+        if config.mode not in self.MODES:
+            raise ValueError(
+                f"Modo de adquisición no válido: {config.mode}"
+            )
+
+        if (
+            not self._positive_integer(config.average_count)
+            or config.average_count not in self.AVERAGE_OPTIONS
+        ):
+            raise ValueError(
+                "average_count debe ser uno de: "
+                "4, 16, 32, 64, 128 o 256"
+            )
+
+        for name in (
+            "envelope_count",
+            "peak_bucket_size",
+            "high_resolution_factor",
+        ):
+            value = getattr(config, name)
+
+            if not self._positive_integer(value):
+                raise ValueError(
+                    f"{name} debe ser un entero positivo"
+                )
+
+    # ============================================================
+    # CONFIGURACIÓN
+    # ============================================================
+
+    def set_mode(self, mode):
+        """Selecciona el modo de adquisición."""
+
+        self.configure(mode=mode)
+
+    def set_average_count(self, count):
+        """
+        Configura la cantidad de adquisiciones
+        utilizadas por el modo Average.
+
+        Valores permitidos:
+            4, 16, 32, 64, 128, 256
+        """
+
+        self.configure(average_count=count)
+
+    def configure(self, **kwargs):
+        """
+        Actualiza la configuración de manera segura.
+
+        Si cambia algún parámetro, reinicia los
+        estados acumulados de los canales.
+        """
+
+        valid_fields = set(
+            AcquisitionConfig.__dataclass_fields__
+        )
+
+        for key in kwargs:
+            if key not in valid_fields:
+                raise ValueError(
+                    f"Parámetro desconocido: {key}"
+                )
+
+        new_config = replace(self.config, **kwargs)
+
+        self._validate_config(new_config)
+
+        if new_config != self.config:
+            self.config = new_config
+            self.reset()
+
+    def get_mode(self):
+        """Devuelve el modo seleccionado."""
+
+        return self.config.mode
+
+    def get_average_count(self):
+        """Devuelve la cantidad de promedios configurada."""
+
+        return self.config.average_count
+
+    # ============================================================
+    # REGISTRO DE ALGORITMOS
+    # ============================================================
+
+    def register_processor(self, mode, processor):
+        """
+        Registra el algoritmo correspondiente a un modo.
+
+        El algoritmo debe aceptar:
+            processor(samples, channel, config, state)
+
+        Sampling ya viene registrado.
+
+        Los demás se registrarán al implementar
+        los archivos de acquisition/modes/.
+        """
+
+        if mode not in self.MODES:
+            raise ValueError(
+                f"Modo desconocido: {mode}"
+            )
+
+        if mode in self.DISPLAY_MODES:
+            raise ValueError(
+                f"{mode} se implementará mediante "
+                "la estrategia de visualización"
+            )
+
+        if not callable(processor):
+            raise TypeError(
+                "El procesador debe ser una función callable"
+            )
+
+        self._processors[mode] = processor
+
+        self.reset()
+
+    # ============================================================
+    # ESTADOS POR CANAL
+    # ============================================================
+
+    def reset(self, channel=None):
+        """
+        Reinicia los estados acumulados.
+
+        channel=None:
+            Reinicia CH1 y CH2.
+
+        channel=1:
+            Reinicia solamente CH1.
+
+        channel=2:
+            Reinicia solamente CH2.
+        """
+
+        if channel is None:
+            self._states.clear()
+            return
+
+        self._validate_channel(channel)
+
+        self._states.pop(channel, None)
+
+    @staticmethod
+    def _validate_channel(channel):
+
+        if channel not in (1, 2):
+            raise ValueError(
+                "El canal debe ser 1 o 2"
+            )
+
+    def _get_state(self, channel):
+
+        if channel not in self._states:
+            self._states[channel] = {}
+
+        return self._states[channel]
+
+    # ============================================================
+    # PROCESAMIENTO
+    # ============================================================
+
+    def process(self, samples, channel=1):
+        """
+        Procesa una adquisición completa.
+
+        Parameters
+        ----------
+        samples:
+            Vector NumPy 1D de una captura.
+
+        channel:
+            1 para CH1.
+            2 para CH2.
+
+        Returns
+        -------
+        Resultado del algoritmo seleccionado.
+
+        IMPORTANTE:
+            Average y Envelope necesitarán capturas
+            completas, alineadas temporalmente.
+            No se deben pasar fragmentos USB arbitrarios.
+        """
+
+        self._validate_channel(channel)
+
+        data = np.asarray(
+            samples,
+            dtype=np.float32,
+        )
+
+        if data.ndim != 1:
+            raise ValueError(
+                "Las muestras deben formar un vector 1D"
+            )
+
+        if data.size == 0:
+            return data.copy()
+
+        mode = self.config.mode
+
+        if mode in self.DISPLAY_MODES:
+            raise NotImplementedError(
+                f"El modo {mode} requiere integración "
+                "con el sistema de visualización"
+            )
+
+        processor = self._processors.get(mode)
+
+        if processor is None:
+            raise NotImplementedError(
+                f"El algoritmo del modo {mode} "
+                "todavía no está implementado"
+            )
+
+        state = self._get_state(channel)
+
+        return processor(
+            data,
+            channel,
+            self.config,
+            state,
+        )
+
+    # ============================================================
+    # INFORMACIÓN
+    # ============================================================
+
+    def get_config(self):
+        """Devuelve una copia de la configuración."""
+
+        return replace(self.config)
+
+    def get_state(self, channel=1):
+        """
+        Devuelve una copia superficial del estado del canal.
+
+        Pensado para diagnóstico. No modifica
+        el estado interno del procesador.
+        """
+
+        self._validate_channel(channel)
+
+        state = self._states.get(channel, {})
+
+        return {
+            key: (
+                value.copy()
+                if isinstance(value, np.ndarray)
+                else value
+            )
+            for key, value in state.items()
+        }
