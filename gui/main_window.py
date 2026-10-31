@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
     QWidgetAction,
@@ -118,11 +119,20 @@ class MainWindow(QMainWindow):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(8, 8, 8, 6)
+        layout.setSpacing(8)
+
         title = QLabel("Osciloscopio de Audio")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(title)
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(title, 0, Qt.AlignmentFlag.AlignTop)
+
         self.oscilloscope = OscilloscopeWidget()
-        layout.addWidget(self.oscilloscope)
+        self.oscilloscope.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        layout.addWidget(self.oscilloscope, 1)
 
         self._create_acquisition_menu()
         self.oscilloscope.acquisition_state_changed.connect(

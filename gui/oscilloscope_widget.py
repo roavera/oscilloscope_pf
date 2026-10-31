@@ -13,10 +13,11 @@ from threading import Lock
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Slot, Signal, Qt
+from PySide6.QtCore import QSettings, QTimer, Slot, Signal, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QSplitter,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -184,23 +185,69 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def create_interface(self):
+        """Distribuye el display y los controles mediante un separador móvil."""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
 
-        # Panel derecho de controles.
-        self.controls_scroll = QScrollArea(self)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(7)
+
+        # Display: conserva exactamente el mismo OscilloscopePlot.
+        self.plot.setMinimumWidth(320)
+        self.splitter.addWidget(self.plot)
+
+        # Panel derecho: conserva los controles y sus conexiones originales.
+        self.controls_scroll = QScrollArea(self.splitter)
         self.controls_scroll.setWidgetResizable(True)
+        self.controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.controls_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.controls_scroll.setMinimumWidth(490)
+
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setSpacing(8)
         right_layout.addWidget(self.controls)
         right_layout.addWidget(self.cursor_controls)
+        right_layout.addStretch(1)
         self.controls_scroll.setWidget(right_container)
-        self.controls_scroll.setFixedWidth(490)
+        self.splitter.addWidget(self.controls_scroll)
 
-        layout.addWidget(self.plot, 1)
-        layout.addWidget(self.controls_scroll)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        layout.addWidget(self.splitter)
+
+        self._layout_settings = QSettings("OsciloscopioPF", "Osciloscopio")
+        self._restoring_splitter = True
+        self.splitter.splitterMoved.connect(self._save_splitter_width)
+        QTimer.singleShot(0, self._restore_splitter_width)
+
+    def _restore_splitter_width(self):
+        """Restaura el ancho del panel lateral al iniciar la interfaz."""
+        width = self._layout_settings.value(
+            "layout/sidebar_width_v2", 500, type=int
+        )
+        width = max(490, min(650, width))
+        total = self.splitter.width()
+        handle = self.splitter.handleWidth()
+        available = max(0, total - handle)
+        # Priorizar un display usable incluso en ventanas pequeñas.
+        width = min(width, max(490, available - 320))
+        self.splitter.setSizes([max(320, available - width), width])
+        self._restoring_splitter = False
+
+    def _save_splitter_width(self, position, index):
+        """Guarda el ancho que el usuario eligió arrastrando el separador."""
+        if not self._restoring_splitter:
+            self._layout_settings.setValue(
+                "layout/sidebar_width_v2", self.splitter.sizes()[1]
+            )
 
     # ================================================================
     # CONEXIONES
