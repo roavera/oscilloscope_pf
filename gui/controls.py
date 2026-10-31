@@ -8,6 +8,7 @@ from gui.panels.horizontal_controls import HorizontalControls
 from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
 from gui.panels.simulator_controls import SimulatorControls
+from gui.widgets.cursor_controls import CursorControls
 from gui.widgets.collapsible_section import CollapsibleSection
 
 
@@ -51,6 +52,7 @@ class OscilloscopeControls(QWidget):
         self.ch1_controls = VerticalControls(channel="CH1")
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
+        self.cursor_controls = CursorControls()
         self.simulator_controls = SimulatorControls()
 
         for panel in (
@@ -58,6 +60,7 @@ class OscilloscopeControls(QWidget):
             self.ch1_controls,
             self.horizontal_controls,
             self.trigger_controls,
+            self.cursor_controls,
             self.simulator_controls,
         ):
             panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -66,6 +69,9 @@ class OscilloscopeControls(QWidget):
         self._add_section(layout, "vertical", "Vertical — CH1", self.ch1_controls)
         self._add_section(layout, "horizontal", "Horizontal", self.horizontal_controls)
         self._add_section(layout, "trigger", "Trigger", self.trigger_controls)
+        self.cursor_section = self._add_section(
+            layout, "cursors", "Cursores — CH1", self.cursor_controls, default=False
+        )
         self.simulator_section = self._add_section(
             layout, "simulator", "Generador simulado", self.simulator_controls, default=False
         )

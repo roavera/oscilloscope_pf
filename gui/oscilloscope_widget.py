@@ -29,7 +29,6 @@ from trigger.edge_trigger import Edge_Trigger
 
 from gui.controls import OscilloscopeControls
 from gui.oscilloscope_plot import OscilloscopePlot
-from gui.widgets.cursor_controls import CursorControls
 
 class OscilloscopeWidget(QWidget):
     acquisition_state_changed = Signal(str)
@@ -145,7 +144,7 @@ class OscilloscopeWidget(QWidget):
             vertical_offset=self.vertical_offset,
         )
 
-        self.cursor_controls = CursorControls()
+        self.cursor_controls = self.controls.cursor_controls
         self.create_interface()
         self.connect_signals()
 
@@ -185,6 +184,8 @@ class OscilloscopeWidget(QWidget):
 
     def create_interface(self):
         """Distribuye el display y los controles mediante un separador móvil."""
+        self._layout_settings = QSettings("OsciloscopioPF", "Osciloscopio")
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(0)
@@ -213,7 +214,7 @@ class OscilloscopeWidget(QWidget):
         right_layout.setContentsMargins(4, 4, 4, 4)
         right_layout.setSpacing(8)
         right_layout.addWidget(self.controls)
-        right_layout.addWidget(self.cursor_controls)
+
         right_layout.addStretch(1)
         self.controls_scroll.setWidget(right_container)
         self.splitter.addWidget(self.controls_scroll)
@@ -222,7 +223,6 @@ class OscilloscopeWidget(QWidget):
         self.splitter.setStretchFactor(1, 0)
         layout.addWidget(self.splitter)
 
-        self._layout_settings = QSettings("OsciloscopioPF", "Osciloscopio")
         self._restoring_splitter = True
         self.splitter.splitterMoved.connect(self._save_splitter_width)
         QTimer.singleShot(0, self._restore_splitter_width)
