@@ -1,16 +1,95 @@
-"""Ventana principal y selector de fuente de adquisición."""
+"""Ventana principal con conexión Blackpill USB asíncrona.
 
+Requiere las versiones actualizadas de acquisition_manager.py y
+oscilloscope_widget.py entregadas junto con esta integración.
+Adquisición > Fuente > Blackpill USB COM abre el selector de puerto.
+STOP congela la pantalla; Desconectar detiene la fuente y cierra el COM.
+"""
+
+from PySide6.QtCore import QTimer, Slot
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QVBoxLayout,
-    QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
+    QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
 from .oscilloscope_widget import OscilloscopeWidget
+
+
+class PortDialog(QDialog):
+    """Selector actualizable. También admite escribir COM5 o /dev/ttyACM0."""
+
+    AUTO = "Detección automática"
+
+    def __init__(self, current_port=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Conectar Blackpill")
+        self.resize(480, 180)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Puerto USB de la Blackpill:"))
+
+        row = QHBoxLayout()
+        self.ports = QComboBox(self)
+        self.ports.setEditable(True)
+        self.ports.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        row.addWidget(self.ports, 1)
+        refresh = QPushButton("Actualizar", self)
+        refresh.clicked.connect(self.refresh_ports)
+        row.addWidget(refresh)
+        layout.addLayout(row)
+
+        self.info = QLabel(self)
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel, parent=self
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Conectar")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.ports.addItem(self.AUTO, None)
+        if current_port:
+            self.ports.setEditText(str(current_port))
+        self.refresh_ports()
+
+    def selected_port(self):
+        text = self.ports.currentText().strip()
+        if not text or text == self.AUTO:
+            return None
+        index = self.ports.currentIndex()
+        if index >= 0 and text == self.ports.itemText(index):
+            return self.ports.itemData(index)
+        return text
+
+    @Slot()
+    def refresh_ports(self):
+        selected = self.selected_port()
+        self.ports.clear()
+        self.ports.addItem(self.AUTO, None)
+        try:
+            # Importación local: audio/simulador no dependen de pyserial.
+            from communication.transport import list_serial_ports
+            ports = list_serial_ports()
+        except Exception as exc:
+            ports = []
+            self.info.setText(str(exc))
+        else:
+            self.info.setText(
+                "Elegí el COM de la placa. Cerrá otros programas que lo usen."
+                if ports else
+                "No se detectaron puertos. Conectá la placa y pulsá Actualizar."
+            )
+        for port in ports:
+            self.ports.addItem(str(port), port.device)
+        if selected:
+            index = self.ports.findData(selected)
+            if index >= 0:
+                self.ports.setCurrentIndex(index)
+            else:
+                self.ports.setEditText(selected)
 
 
 class MainWindow(QMainWindow):
@@ -18,96 +97,180 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Osciloscopio de Audio")
         self.resize(1200, 700)
+        self._closing = False
+        self._last_error = None
+        self._error_box = None
 
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-
+        layout = QVBoxLayout(central_widget)
         title = QLabel("Osciloscopio de Audio")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        main_layout.addWidget(title)
-
+        layout.addWidget(title)
         self.oscilloscope = OscilloscopeWidget()
-        main_layout.addWidget(self.oscilloscope)
+        layout.addWidget(self.oscilloscope)
 
         self._create_acquisition_menu()
+        self.oscilloscope.acquisition_state_changed.connect(
+            self._on_acquisition_state
+        )
+        self.oscilloscope.acquisition_error.connect(self._show_error)
+
+        # También refleja RUN/STOP, que no cambia el estado del enlace.
+        self.status_timer = QTimer(self)
+        self.status_timer.setInterval(250)
+        self.status_timer.timeout.connect(self._update_status)
+        self.status_timer.start()
         self._update_status()
 
     def _create_acquisition_menu(self):
-        """Crea el menú Adquisición > Fuente."""
-        acquisition_menu = self.menuBar().addMenu("Adquisición")
-        source_menu = acquisition_menu.addMenu("Fuente")
-
+        menu = self.menuBar().addMenu("Adquisición")
+        sources_menu = menu.addMenu("Fuente")
         self.source_group = QActionGroup(self)
         self.source_group.setExclusive(True)
         self.source_actions = {}
-
-        sources = (
-            (AcquisitionManager.AUDIO, "Audio (sounddevice)", True),
-            (AcquisitionManager.SIMULATOR, "Simulador Blackpill", True),
-            (AcquisitionManager.BLACKPILL_USB, "Blackpill USB COM (próximamente)", False),
-        )
-
-        for source_id, label, enabled in sources:
+        for source, label in (
+            (AcquisitionManager.AUDIO, "Audio (sounddevice)"),
+            (AcquisitionManager.SIMULATOR, "Simulador Blackpill"),
+            (AcquisitionManager.BLACKPILL_USB, "Blackpill USB COM"),
+        ):
             action = QAction(label, self)
             action.setCheckable(True)
-            action.setEnabled(enabled)
-            action.setData(source_id)
+            action.setData(source)
             self.source_group.addAction(action)
-            source_menu.addAction(action)
-            self.source_actions[source_id] = action
-
-        current_source = self.oscilloscope.acquisition.source
-        self.source_actions[current_source].setChecked(True)
+            sources_menu.addAction(action)
+            self.source_actions[source] = action
         self.source_group.triggered.connect(self._on_source_selected)
 
-    def _on_source_selected(self, action):
-        """Cambia la fuente y recupera la anterior si el cambio falla."""
-        source = action.data()
-        previous_source = self.oscilloscope.acquisition.source
+        menu.addSeparator()
+        self.port_action = QAction("Elegir puerto y conectar Blackpill…", self)
+        self.port_action.triggered.connect(self._choose_usb_port)
+        menu.addAction(self.port_action)
 
-        if source == previous_source:
-            return
+        self.connect_action = QAction("Conectar / reintentar fuente actual", self)
+        self.connect_action.triggered.connect(self._connect_current)
+        menu.addAction(self.connect_action)
 
+        self.disconnect_action = QAction("Desconectar fuente actual", self)
+        self.disconnect_action.triggered.connect(self._disconnect_current)
+        menu.addAction(self.disconnect_action)
+
+    def _perform(self, operation):
         try:
-            self.oscilloscope.change_acquisition_source(source)
-
-            if not self.oscilloscope.acquisition.is_running:
-                raise RuntimeError(
-                    "La fuente seleccionada no pudo iniciarse."
-                )
-
+            operation()
         except Exception as exc:
-            try:
-                self.oscilloscope.change_acquisition_source(previous_source)
-            except Exception:
-                pass
-
-            current_source = self.oscilloscope.acquisition.source
-            if current_source in self.source_actions:
-                self.source_actions[current_source].setChecked(True)
-
+            self._show_error(str(exc))
+        finally:
             self._update_status()
-            QMessageBox.warning(self, "Error de adquisición", str(exc))
-            return
 
+    @Slot(QAction)
+    def _on_source_selected(self, action):
+        source = action.data()
+        if source == AcquisitionManager.BLACKPILL_USB:
+            self._choose_usb_port()
+            return
+        manager = self.oscilloscope.acquisition
+        if source == manager.source and (manager.is_running or manager.is_connecting):
+            self._update_status()
+            return
+        # Un fallo permanece visible; no volver a audio silenciosamente.
+        self._perform(lambda: self.oscilloscope.change_acquisition_source(source))
+
+    @Slot()
+    def _choose_usb_port(self):
+        manager = self.oscilloscope.acquisition
+        dialog = PortDialog(manager.usb_port, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._update_status()  # restaurar selección si se canceló
+            return
+        port = dialog.selected_port()
+        self._perform(
+            lambda: self.oscilloscope.connect_blackpill(port, simulated=False)
+        )
+
+    @Slot()
+    def _connect_current(self):
+        manager = self.oscilloscope.acquisition
+        if manager.is_connecting or manager.is_running:
+            return
+        self._perform(self.oscilloscope.start_acquisition)
+
+    @Slot()
+    def _disconnect_current(self):
+        self._perform(self.oscilloscope.disconnect_acquisition)
+
+    @Slot(str)
+    def _on_acquisition_state(self, state):
+        if state in ("connecting", "connected", "stopped"):
+            self._last_error = None
         self._update_status()
 
+    @Slot(str)
+    def _show_error(self, message):
+        if self._closing:
+            return
+        self._update_status()
+        if message == self._last_error:
+            return
+        self._last_error = message
+        if self._error_box is not None:
+            self._error_box.close()
+        self._error_box = QMessageBox(self)
+        self._error_box.setIcon(QMessageBox.Icon.Warning)
+        self._error_box.setWindowTitle("Error de adquisición")
+        self._error_box.setText(message)
+        self._error_box.setInformativeText(
+            "Revisá la conexión y el puerto. Después podés usar "
+            "Adquisición > Conectar / reintentar fuente actual."
+        )
+        self._error_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        # No bloquear el procesamiento de estados con un exec() anidado.
+        self._error_box.open()
+
+    @Slot()
     def _update_status(self):
-        """Actualiza la fuente activa y la frecuencia de muestreo."""
+        manager = self.oscilloscope.acquisition
         labels = {
-            AcquisitionManager.AUDIO: "Audio (sounddevice)",
-            AcquisitionManager.SIMULATOR: "Simulador Blackpill",
-            AcquisitionManager.BLACKPILL_USB: "Blackpill USB COM",
+            manager.AUDIO: "Audio (sounddevice)",
+            manager.SIMULATOR: "Simulador Blackpill",
+            manager.BLACKPILL_USB: "Blackpill USB COM",
         }
+        states = {
+            "connecting": "conectando",
+            "connected": "conectada",
+            "stopped": "detenida",
+            "error": "error",
+        }
+        source = manager.source
+        state = manager.state
+        for key, action in self.source_actions.items():
+            action.setChecked(key == source)
 
-        source = self.oscilloscope.acquisition.source
-        label = labels.get(source, source)
-        state = (
-            "activa" if self.oscilloscope.acquisition.is_running else "detenida"
+        self.connect_action.setEnabled(state in ("stopped", "error"))
+        self.disconnect_action.setEnabled(state != "stopped")
+        self.port_action.setEnabled(not self._closing)
+        view = "RUN" if self.oscilloscope.running else "STOP"
+        text = (
+            f"Fuente: {labels.get(source, source)} | "
+            f"Adquisición: {states.get(state, state)} | Vista: {view} | "
+            f"Fs: {manager.sample_rate:,.2f} Hz"
         )
-        sample_rate = self.oscilloscope.acquisition.sample_rate
+        if source == manager.BLACKPILL_USB:
+            port = manager.usb_port or "automático"
+            text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"
+        self.statusBar().showMessage(text)
 
-        self.statusBar().showMessage(
-            f"Fuente: {label} | Estado: {state} | Fs: {sample_rate:,.2f} Hz"
-        )
+    def closeEvent(self, event):
+        # Cerrar primero permite cancelar el cierre si el hilo no termina.
+        try:
+            self.oscilloscope.disconnect_acquisition()
+            self.oscilloscope.shutdown()
+        except Exception as exc:
+            self._show_error(str(exc))
+            event.ignore()
+            return
+        self._closing = True
+        self.status_timer.stop()
+        if self._error_box is not None:
+            self._error_box.close()
+        event.accept()

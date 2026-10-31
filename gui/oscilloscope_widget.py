@@ -1,10 +1,19 @@
-"""Integra adquisición, gráfico y controles del osciloscopio."""
+"""Widget compatible con el AcquisitionManager asíncrono.
+
+USB: connect_blackpill(port=None, simulated=False); reconnect_acquisition();
+disconnect_acquisition(). Señales públicas: acquisition_state_changed(str),
+acquisition_error(str). La ventana principal debe aceptar is_connecting como
+estado válido al cambiar de fuente y habilitar su menú USB.
+
+STOP/SINGLE congelan la pantalla; disconnect_acquisition() detiene la fuente.
+Se muestra CH1. Las muestras USB siguen normalizadas, no calibradas en voltios.
+"""
 
 from threading import Lock
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import QTimer, Slot, Signal, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -22,6 +31,11 @@ from gui.oscilloscope_plot import OscilloscopePlot
 from gui.widgets.cursor_controls import CursorControls
 
 class OscilloscopeWidget(QWidget):
+    acquisition_state_changed = Signal(str)
+    acquisition_error = Signal(str)
+    _reader_state = Signal(int, str)
+    _reader_error = Signal(int, object)
+
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,6 +101,8 @@ class OscilloscopeWidget(QWidget):
         self._audio_error = None
         self._new_data = False
         self._source_generation = 0
+        self._connection_state = "stopped"
+        self._pending_discontinuity = False
 
         self._buffer_lock = Lock()
 
@@ -155,6 +171,12 @@ class OscilloscopeWidget(QWidget):
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
 
+        self._reader_state.connect(
+            self._on_reader_state, Qt.ConnectionType.QueuedConnection
+        )
+        self._reader_error.connect(
+            self._on_reader_error, Qt.ConnectionType.QueuedConnection
+        )
         self.start_acquisition()
 
     # ================================================================
@@ -249,63 +271,168 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def start_acquisition(self):
+        """Solicita el arranque; USB confirma la conexión mediante señales."""
+        if self._closed or self.acquisition.is_connecting or self.acquisition.is_running:
+            return
+        # Terminar el lector anterior ANTES de cambiar sus callbacks.
         try:
+            self.acquisition.stop()
+        except Exception as exc:
+            self._on_reader_error(self._source_generation, exc)
+            return
+        with self._buffer_lock:
+            self._source_generation += 1
             generation = self._source_generation
+        self.reset_acquisition(self.acquisition.sample_rate)
+        self.acquisition.on_state_changed = (
+            lambda state: self._reader_state.emit(generation, state)
+        )
+        self.acquisition.on_error = (
+            lambda error: self._reader_error.emit(generation, error)
+        )
+        self.acquisition.on_discontinuity = (
+            lambda: self._on_discontinuity(generation)
+        )
+        self._audio_error = None
+        self._connection_state = "connecting"
+        self.running = False
+        self.controls.set_acquisition_enabled(False)
+        self.display_timer.start()
+        self.update_controls_state()
+        self.acquisition_state_changed.emit("connecting")
+        try:
             self.acquisition.start(
                 lambda data: self.on_samples_received(data, generation)
             )
-
-        except Exception as error:
-            self._audio_error = str(error)
-            self.running = False
-
-            self.controls.set_acquisition_enabled(False)
-            self.update_controls_state()
-
+        except Exception as exc:
+            self._on_reader_error(generation, exc)
         else:
+            # Fuentes síncronas y conexión USB que termine inmediatamente.
+            self._on_reader_state(generation, self.acquisition.state)
+
+    @Slot(int, str)
+    def _on_reader_state(self, generation, state):
+        if self._closed or generation != self._source_generation:
+            return
+        # Ignorar avisos encolados que ya fueron superados por otro estado.
+        if state != self.acquisition.state or state == self._connection_state:
+            return
+        self._connection_state = state
+        if state == "connected":
             self._audio_error = None
-            self.controls.set_acquisition_enabled(True)
             self.running = True
+            self.controls.set_acquisition_enabled(True)
             self.display_timer.start()
-            self.update_controls_state()
+        elif state == "connecting":
+            self.running = False
+            self.controls.set_acquisition_enabled(False)
+        elif state == "error":
+            self._on_reader_error(generation, self.acquisition.last_error)
+            return
+        else:
+            self.running = False
+            self.display_timer.stop()
+            self.controls.set_acquisition_enabled(True)
+        self.update_controls_state()
+        self.acquisition_state_changed.emit(state)
 
-    def change_acquisition_source(self, source, sample_rate=None):
-        """Cambia la fuente desde el hilo principal de Qt.
+    @Slot(int, object)
+    def _on_reader_error(self, generation, error):
+        if self._closed or generation != self._source_generation:
+            return
+        message = str(error) if error is not None else "Error de adquisición"
+        duplicate = self._audio_error == message and self._connection_state == "error"
+        self._connection_state = "error"
+        self._audio_error = message
+        self.running = False
+        self.display_timer.stop()
+        # RUN permite volver a intentar; SINGLE se valida en single().
+        self.controls.set_acquisition_enabled(True)
+        self.update_controls_state()
+        if not duplicate:
+            self.acquisition_state_changed.emit("error")
+            self.acquisition_error.emit(message)
 
-        Audio y simulador se inician automáticamente; USB COM queda pendiente.
-        """
+    def _on_discontinuity(self, generation):
+        """Hilo lector: cortar el historial antes de agregar nuevas muestras."""
+        with self._buffer_lock:
+            if self._closed or generation != self._source_generation:
+                return
+            self.buffer.clear()
+            self._new_data = False
+            self._pending_discontinuity = True
+        # Nunca modificar widgets ni el trigger desde este callback.
+
+    def _clear_trigger_history(self):
+        """Solo Qt: invalida las capturas del segmento anterior."""
+        self.trigger_found = False
+        self.trigger.fractional_offset = 0.0
+        self.last_acquisition = None
+        self._last_display_buffer = None
+        self._last_trigger_index = None
+        self._last_fractional_offset = 0.0
+        self.plot.clear_signal()
+
+    def disconnect_acquisition(self):
+        """Cierra la fuente; invalida los avisos pendientes del lector anterior."""
         if self._closed:
             return
-        # Validar antes de detener la fuente actual.
+        with self._buffer_lock:
+            self._source_generation += 1
+        self.running = False
+        self.display_timer.stop()
+        try:
+            self.acquisition.stop()
+        except Exception as exc:
+            self._on_reader_error(self._source_generation, exc)
+            raise
+        self._connection_state = "stopped"
+        self._audio_error = None
+        self.controls.set_acquisition_enabled(True)
+        self.update_controls_state()
+        self.acquisition_state_changed.emit("stopped")
+
+    def reconnect_acquisition(self):
+        """Reabre la fuente actual usando el puerto configurado."""
+        if self._closed:
+            return
+        self.disconnect_acquisition()
+        self.start_acquisition()
+
+    def connect_blackpill(self, port=None, *, simulated=False):
+        """port=None busca el COM automáticamente. Solo CH1 en pantalla."""
+        if self._closed:
+            return
+        self.disconnect_acquisition()
+        self.acquisition.usb_port = port
+        self.acquisition.usb_simulated = bool(simulated)
+        self.change_acquisition_source(AcquisitionManager.BLACKPILL_USB)
+
+    def change_acquisition_source(self, source, sample_rate=None):
+        """Cambia la fuente. USB permanece conectando hasta recibir audio."""
+        if self._closed:
+            return
         if source not in self.acquisition.SAMPLE_RATES:
             raise ValueError(f"Fuente desconocida: {source}")
         rate = float(sample_rate if sample_rate is not None
                      else self.acquisition.SAMPLE_RATES[source])
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
-
-        self.display_timer.stop()
-        self.running = False
-        with self._buffer_lock:
-            self._source_generation += 1
+        self.disconnect_acquisition()
         self.acquisition.change_source(source, rate)
-        self.reset_acquisition(rate)
-        self.controls.simulator_controls.setVisible(source == AcquisitionManager.SIMULATOR)
-        self._audio_error = None
-
-        if source in (AcquisitionManager.AUDIO, AcquisitionManager.SIMULATOR):
-            self.start_acquisition()
-            if source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
-                self._on_simulator_settings_changed({
-                    "waveform": self.controls.simulator_controls.waveform.currentData(),
-                    "frequency": self.controls.simulator_controls.frequency.value(),
-                    "amplitude": self.controls.simulator_controls.amplitude.value(),
-                    "offset": self.controls.simulator_controls.offset.value(),
-                    "noise": self.controls.simulator_controls.noise.value(),
-                })
-        else:
-            self.controls.set_acquisition_enabled(False)
-            self.update_controls_state()
+        self.controls.simulator_controls.setVisible(
+            source == AcquisitionManager.SIMULATOR
+        )
+        self.start_acquisition()
+        if source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
+            panel = self.controls.simulator_controls
+            self._on_simulator_settings_changed({
+                "waveform": panel.waveform.currentData(),
+                "frequency": panel.frequency.value(),
+                "amplitude": panel.amplitude.value(),
+                "offset": panel.offset.value(),
+                "noise": panel.noise.value(),
+            })
 
     def _on_simulator_settings_changed(self, settings):
         if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
@@ -323,6 +450,7 @@ class OscilloscopeWidget(QWidget):
         with self._buffer_lock:
             self.sample_rate = rate
             self.buffer = AcquisitionBuffer(max(1, int(np.ceil(rate))))
+            self._pending_discontinuity = False
             self._new_data = False
         self.display_samples = max(
             2, int(self.sample_rate * self.time_per_division
@@ -360,16 +488,22 @@ class OscilloscopeWidget(QWidget):
 
     @Slot()
     def process_data(self):
-        if self._closed or not self.running:
+        if self._closed:
             return
 
         with self._buffer_lock:
-            if not self._new_data:
-                return
+            discontinuity = self._pending_discontinuity
+            self._pending_discontinuity = False
+            data = None
+            if self.running and self._new_data:
+                data = self.buffer.get_data().copy()
+                self._new_data = False
 
-            # Copia independiente del buffer de adquisición.
-            data = self.buffer.get_data().copy()
-            self._new_data = False
+        if discontinuity:
+            self._clear_trigger_history()
+            self.update_controls_state()
+        if data is None:
+            return
 
         if len(data) < self.display_samples:
             return
@@ -490,6 +624,9 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def update_controls_state(self):
+        if self._connection_state == "connecting":
+            self.controls.show_state(False, "CONECTANDO...")
+            return
         if self._audio_error is not None:
             self.controls.show_state(
                 False,
@@ -677,7 +814,10 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def toggle_run_stop(self):
-        if self._closed or self._audio_error is not None:
+        if self._closed or self.acquisition.is_connecting:
+            return
+        if self._audio_error is not None or not self.acquisition.is_running:
+            self.start_acquisition()
             return
 
         if self.running:
@@ -696,7 +836,8 @@ class OscilloscopeWidget(QWidget):
         self.update_controls_state()
 
     def single(self):
-        if self._closed or self._audio_error is not None:
+        if (self._closed or self._audio_error is not None
+                or not self.acquisition.is_running):
             return
 
         self.trigger_mode = "Single"
