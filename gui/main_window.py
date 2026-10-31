@@ -120,6 +120,8 @@ class MainWindow(QMainWindow):
         self.oscilloscope.acquisition_error.connect(self._show_error)
         
         self._create_appearance_menu()
+        
+        self._create_display_menu()
 
         # También refleja RUN/STOP, que no cambia el estado del enlace.
         self.status_timer = QTimer(self)
@@ -207,6 +209,64 @@ class MainWindow(QMainWindow):
             self._show_error(str(exc))
         finally:
             self._update_status()
+            
+    
+    def _create_display_menu(self):
+        """Selector independiente de apariencia del gráfico."""
+
+        menu = self.menuBar().addMenu("Pantalla")
+
+        self.display_theme_group = QActionGroup(self)
+        self.display_theme_group.setExclusive(True)
+
+        self.display_dark_action = QAction(
+            "Fondo oscuro", self
+        )
+        self.display_light_action = QAction(
+            "Fondo claro", self
+        )
+
+        for action in (
+            self.display_dark_action,
+            self.display_light_action,
+        ):
+            action.setCheckable(True)
+            self.display_theme_group.addAction(action)
+            menu.addAction(action)
+
+        self.display_dark_action.triggered.connect(
+            lambda: self._set_display_theme("dark")
+        )
+        self.display_light_action.triggered.connect(
+            lambda: self._set_display_theme("light")
+        )
+
+        saved = self.theme_manager.settings.value(
+            "appearance/display_theme",
+            "dark",
+            type=str,
+        )
+
+        if saved not in ("dark", "light"):
+            saved = "dark"
+
+        self._set_display_theme(saved)
+
+
+    def _set_display_theme(self, theme):
+        self.oscilloscope.plot.set_display_theme(theme)
+
+        self.theme_manager.settings.setValue(
+            "appearance/display_theme", theme
+        )
+
+        self.display_dark_action.setChecked(
+            theme == "dark"
+        )
+        self.display_light_action.setChecked(
+            theme == "light"
+        )
+
 
     @Slot(QAction)
     def _on_source_selected(self, action):

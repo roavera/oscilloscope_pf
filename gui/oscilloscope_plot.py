@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QGraphicsObject
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
+from .theme.colors import PLOT_COLORS
 
 class ChannelMarker(QGraphicsObject):
     """Triángulo CH1 de tamaño fijo, arrastrable sobre el eje izquierdo."""
@@ -27,8 +28,14 @@ class ChannelMarker(QGraphicsObject):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(painter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#a28d30"), 1))
-        painter.setBrush(QBrush(QColor("#e3c84b")))
+        
+        color = PLOT_COLORS[
+            self.plot.display_theme
+        ]["ch1"]
+
+        painter.setPen(QPen(QColor(color).darker(130), 1))
+        painter.setBrush(QBrush(QColor(color)))
+        
         painter.drawPolygon(QPolygonF([
             QPointF(0, -11), QPointF(28, 0), QPointF(0, 11)
         ]))
@@ -81,7 +88,7 @@ class ChannelMarker(QGraphicsObject):
 
 
 class OscilloscopePlot(QWidget):
-
+    
     # Se emite solo cuando el usuario arrastra el trigger.
     trigger_level_changed = Signal(float)
     horizontal_position_changed = Signal(float)
@@ -119,8 +126,79 @@ class OscilloscopePlot(QWidget):
         self._cursor_updating = False
         self._cursor_signal_x = np.array([], dtype=float)
         self._cursor_signal_y = np.array([], dtype=float)
+        self.display_theme = "dark"
         self.create_interface()
+    
+    def set_display_theme(self, theme_name: str):
+        """Cambia la apariencia del gráfico sin modificar la adquisición."""
 
+        if theme_name not in PLOT_COLORS:
+            raise ValueError(
+                f"Tema de pantalla desconocido: {theme_name}"
+            )
+
+        self.display_theme = theme_name
+        colors = PLOT_COLORS[theme_name]
+
+        # Fondo del área de visualización.
+        self.plot_widget.setBackground(colors["background"])
+
+        # Traza CH1.
+        self.curve.setPen(
+            pg.mkPen(colors["ch1"], width=2)
+        )
+
+        # Trigger horizontal.
+        self.trigger_line.setPen(
+            pg.mkPen(colors["trigger"], width=1.5)
+        )
+        self.trigger_line.setHoverPen(
+            pg.mkPen(colors["trigger"], width=2.5)
+        )
+
+        # Referencia temporal vertical.
+        reference_color = (
+            "#A8B5C8"
+            if theme_name == "dark"
+            else "#68778A"
+        )
+
+        self.trigger_vertical_line.setPen(
+            pg.mkPen(
+                reference_color,
+                width=1.2,
+                style=Qt.PenStyle.DashLine,
+            )
+        )
+        self.trigger_vertical_line.setHoverPen(
+            pg.mkPen(reference_color, width=2)
+        )
+
+        # Aviso de trigger fuera de pantalla.
+        self.trigger_notice.setColor(colors["trigger"])
+
+        # Ejes y etiquetas.
+        axis_color = (
+            "#A8B5C8"
+            if theme_name == "dark"
+            else "#596A7D"
+        )
+
+        plot_item = self.plot_widget.getPlotItem()
+
+        for axis_name in ("left", "bottom"):
+            axis = plot_item.getAxis(axis_name)
+            axis.setPen(pg.mkPen(axis_color))
+            axis.setTextPen(pg.mkPen(axis_color))
+            axis.setStyle(tickFont=None)
+
+        # Contraste del marcador CH1.
+        self.channel_marker.update()
+
+        # Repintar sin cambiar escalas ni muestras.
+        self.plot_widget.update()
+
+    
     # ================================================================
     # INTERFAZ
     # ================================================================
@@ -147,7 +225,7 @@ class OscilloscopePlot(QWidget):
         self.plot_widget.showGrid(
             x=True,
             y=True,
-            alpha=0.3,
+            alpha=0.18,
         )
 
         self.plot_widget.enableAutoRange(
@@ -248,6 +326,8 @@ class OscilloscopePlot(QWidget):
 
         self._create_cursors()
         self.update_scales()
+        
+        self.set_display_theme(self.display_theme)
 
     def _update_channel_marker(self, *args):
         """Fija el triángulo al borde izquierdo y a la altura de 0 V."""
