@@ -6,7 +6,7 @@ Adquisición > Fuente > Blackpill USB COM abre el selector de puerto.
 STOP congela la pantalla; Desconectar detiene la fuente y cierra el COM.
 """
 
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QActionGroup
 
 from PySide6.QtWidgets import (
@@ -23,11 +23,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QWidgetAction,
+    QStackedWidget,
+    QGraphicsOpacityEffect,
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
 from .oscilloscope_widget import OscilloscopeWidget
 from .theme.theme_manager import ThemeManager
+from .widgets.oscilloscope_toolbar import OscilloscopeToolbar
+from .widgets.welcome_page import WelcomePage
 
 class PortDialog(QDialog):
     """Selector actualizable. También admite escribir COM5 o /dev/ttyACM0."""
@@ -116,16 +120,30 @@ class MainWindow(QMainWindow):
         self.theme_manager = ThemeManager(self)
         self.theme_manager.apply_theme(self.theme_manager.current_theme)
 
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        # La bienvenida y el osciloscopio comparten una sola ventana.
+        self.pages = QStackedWidget(self)
+        self.setCentralWidget(self.pages)
+        self.welcome_page = WelcomePage(self)
+        self.pages.addWidget(self.welcome_page)
+
+        self.scope_page = QWidget(self)
+        layout = QVBoxLayout(self.scope_page)
         layout.setContentsMargins(8, 8, 8, 6)
         layout.setSpacing(8)
 
+        header = QHBoxLayout()
+        self.home_button = QPushButton("⌂  Inicio", self.scope_page)
+        self.home_button.setToolTip("Volver a la pantalla de bienvenida")
+        header.addWidget(self.home_button)
         title = QLabel("Osciloscopio de Audio")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        layout.addWidget(title, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(title)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        self.toolbar = OscilloscopeToolbar(self.scope_page)
+        layout.addWidget(self.toolbar, 0)
 
         self.oscilloscope = OscilloscopeWidget()
         self.oscilloscope.setSizePolicy(
@@ -133,6 +151,16 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
         )
         layout.addWidget(self.oscilloscope, 1)
+        self.pages.addWidget(self.scope_page)
+        self.pages.setCurrentWidget(self.welcome_page)
+
+        self.welcome_page.start_requested.connect(self._open_oscilloscope)
+        self.home_button.clicked.connect(self._show_welcome)
+        self._page_animation = None
+
+        self.toolbar.run_stop_clicked.connect(self.oscilloscope.toggle_run_stop)
+        self.toolbar.single_clicked.connect(self.oscilloscope.single)
+        self.toolbar.cursors_clicked.connect(self._toggle_cursors)
 
         self._create_acquisition_menu()
         self.oscilloscope.acquisition_state_changed.connect(
@@ -152,6 +180,44 @@ class MainWindow(QMainWindow):
         self._update_status()
         
     
+    def _transition_to(self, page):
+        """Transición suave al cambiar de página."""
+        if self.pages.currentWidget() is page:
+            return
+        if self._page_animation is not None:
+            self._page_animation.stop()
+        # El efecto se aplica a la página de destino y se retira al finalizar.
+        effect = QGraphicsOpacityEffect(page)
+        page.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        self.pages.setCurrentWidget(page)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(300)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        animation.finished.connect(lambda: page.setGraphicsEffect(None))
+        self._page_animation = animation
+        animation.start()
+
+    @Slot()
+    def _open_oscilloscope(self):
+        self._transition_to(self.scope_page)
+
+    @Slot()
+    def _show_welcome(self):
+        # Volver a Inicio no desconecta ni reinicia la adquisición.
+        # Se conserva la sesión existente hasta que se detenga explícitamente.
+        self._transition_to(self.welcome_page)
+
+    @Slot()
+    def _toggle_cursors(self):
+        """Alterna entre cursores apagados y manuales, sin cambiar el eje."""
+        cursor = self.oscilloscope.controls.cursor_controls
+        cursor.mode.setCurrentText(
+            "Off" if cursor.mode.currentText() != "Off" else "Manual"
+        )
+
     def _create_appearance_menu(self):
         menu = self.menuBar().addMenu("Apariencia")
 
@@ -469,6 +535,15 @@ class MainWindow(QMainWindow):
         if source == manager.BLACKPILL_USB:
             port = manager.usb_port or "automático"
             text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"
+        self.toolbar.update_state(
+            running=self.oscilloscope.running,
+            state=state,
+            source={
+                manager.AUDIO: "Audio",
+                manager.SIMULATOR: "Simulador",
+                manager.BLACKPILL_USB: "Blackpill USB",
+            }.get(source, str(source)),
+        )
         self.statusBar().showMessage(text)
 
     def closeEvent(self, event):
