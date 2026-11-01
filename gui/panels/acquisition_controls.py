@@ -16,6 +16,7 @@ class AcquisitionControls(QGroupBox):
     stop_clicked = Signal()
     mode_changed = Signal(str)
     interpolation_changed = Signal(str)
+    average_count_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__("Adquisición", parent)
@@ -81,7 +82,7 @@ class AcquisitionControls(QGroupBox):
         )
         for label, value in modes:
             self.mode_combo.addItem(label, value)
-        for index in range(1, self.mode_combo.count()):
+        for index in (1, 3, 4):
             self.mode_combo.model().item(index).setEnabled(False)
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setToolTip("Procesamiento de las muestras adquiridas")
@@ -101,9 +102,21 @@ class AcquisitionControls(QGroupBox):
         self.interpolation_combo.setToolTip("Representación visual entre muestras")
 
         form.addRow("Modo:", self.mode_combo)
+        self.average_count_combo = QComboBox()
+        for count in (4, 16, 32, 64, 128, 256):
+            self.average_count_combo.addItem(str(count), count)
+        self.average_count_combo.setCurrentIndex(1)
+        self.average_count_combo.setToolTip("Cantidad de capturas alineadas del promedio móvil")
+        form.addRow("Capturas a promediar:", self.average_count_combo)
+        self.average_progress_label = QLabel("0 / 16 capturas")
+        form.addRow("Progreso:", self.average_progress_label)
         form.addRow("Interpolación:", self.interpolation_combo)
         dialog_layout.addLayout(form)
-        note = QLabel("Las opciones no implementadas permanecen deshabilitadas.")
+        note = QLabel(
+            "Promediado espera disparos válidos, también en Auto. "
+            "SINGLE completa N capturas y congela ambos canales.\n"
+            "Las opciones no implementadas permanecen deshabilitadas."
+        )
         note.setWordWrap(True)
         dialog_layout.addWidget(note)
         close_button = QPushButton("Cerrar")
@@ -115,12 +128,34 @@ class AcquisitionControls(QGroupBox):
         self.stop_button.clicked.connect(self.stop_clicked.emit)
         self.settings_button.clicked.connect(self.settings_dialog.show)
         self.mode_combo.currentIndexChanged.connect(self._emit_mode)
+        self.average_count_combo.currentIndexChanged.connect(self._emit_average_count)
+        self._update_average_controls()
         self.interpolation_combo.currentIndexChanged.connect(self._emit_interpolation)
 
     def _emit_mode(self, _index):
+        self._update_average_controls()
         value = self.mode_combo.currentData()
         if value is not None:
             self.mode_changed.emit(str(value))
+
+    def _update_average_controls(self):
+        enabled = self.mode_combo.currentData() == "average"
+        self.average_count_combo.setEnabled(enabled)
+        self.average_progress_label.setEnabled(enabled)
+
+    def _emit_average_count(self, _index):
+        self.average_count_changed.emit(int(self.average_count_combo.currentData()))
+
+    def set_average_count(self, count):
+        index = self._index_for(self.average_count_combo, count, "Cantidad de capturas")
+        blocker = QSignalBlocker(self.average_count_combo)
+        try:
+            self.average_count_combo.setCurrentIndex(index)
+        finally:
+            del blocker
+
+    def show_average_progress(self, count, target):
+        self.average_progress_label.setText(f"{count} / {target} capturas")
 
     def _emit_interpolation(self, _index):
         value = self.interpolation_combo.currentData()
@@ -155,6 +190,7 @@ class AcquisitionControls(QGroupBox):
         blocker = QSignalBlocker(self.mode_combo)
         try:
             self.mode_combo.setCurrentIndex(index)
+            self._update_average_controls()
         finally:
             del blocker
 
@@ -179,3 +215,4 @@ class AcquisitionControls(QGroupBox):
         if not enabled and self.interpolation_combo.currentIndex() == index:
             raise ValueError("No se puede deshabilitar la interpolación seleccionada.")
         self.interpolation_combo.model().item(index).setEnabled(bool(enabled))
+

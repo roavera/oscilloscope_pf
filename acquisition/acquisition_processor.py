@@ -22,17 +22,19 @@ Modos:
     roll
 
 NOTA:
-    Sampling está implementado.
+    Sampling y Average están implementados.
     Los demás modos se incorporarán progresivamente.
     FastAct y Roll requieren integración con la actualización de pantalla.
 ===============================================================================
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 
 import numpy as np
 
 from acquisition.modes.sampling import process_sampling
+from acquisition.modes.average import process_average
 
 @dataclass
 class AcquisitionConfig:
@@ -93,6 +95,7 @@ class AcquisitionProcessor:
         # Algoritmos registrados.
         self._processors = {
             self.SAMPLING: process_sampling,
+            self.AVERAGE: process_average,
         }
     # ============================================================
     # VALIDACIÓN
@@ -201,7 +204,7 @@ class AcquisitionProcessor:
         El algoritmo debe aceptar:
             processor(samples, channel, config, state)
 
-        Sampling ya viene registrado.
+        Sampling y Average ya vienen registrados.
 
         Los demás se registrarán al implementar
         los archivos de acquisition/modes/.
@@ -346,7 +349,7 @@ class AcquisitionProcessor:
 
     def get_state(self, channel=1):
         """
-        Devuelve una copia superficial del estado del canal.
+        Devuelve una copia independiente del estado del canal.
 
         Pensado para diagnóstico. No modifica
         el estado interno del procesador.
@@ -356,11 +359,11 @@ class AcquisitionProcessor:
 
         state = self._states.get(channel, {})
 
-        return {
-            key: (
-                value.copy()
-                if isinstance(value, np.ndarray)
-                else value
-            )
-            for key, value in state.items()
-        }
+        return deepcopy(state)
+
+    def get_progress(self, channel=1):
+        """Capturas acumuladas y objetivo; no copia los vectores del promedio."""
+        self._validate_channel(channel)
+        state = self._states.get(channel, {})
+        target = self.config.average_count if self.config.mode == self.AVERAGE else 1
+        return int(state.get("count", 0)), target

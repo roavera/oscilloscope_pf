@@ -8,9 +8,11 @@ class StereoBuffer:
         if self.size < 1:
             raise ValueError('El tamaño debe ser positivo')
         self.buffer = np.zeros((self.size, 2), dtype=np.float32)
+        self.total_samples = 0
         self.clear()
 
     def clear(self):
+        # El contador absoluto no retrocede al vaciar el historial.
         self.write_index = 0
         self.valid_samples = 0
 
@@ -20,6 +22,7 @@ class StereoBuffer:
             raise ValueError('Se requieren muestras estéreo (N, 2)')
         if not len(x):
             return
+        self.total_samples += len(x)
         if len(x) >= self.size:
             self.buffer[:] = x[-self.size:]
             self.write_index = 0
@@ -39,3 +42,4 @@ class StereoBuffer:
         if start + n <= self.size:
             return self.buffer[start:start+n].copy()
         return np.concatenate((self.buffer[start:], self.buffer[:(start+n) % self.size]))
+
