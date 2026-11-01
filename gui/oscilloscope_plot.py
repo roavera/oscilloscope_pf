@@ -11,16 +11,17 @@ from .theme.colors import PLOT_COLORS
 from .oscilloscope_grid import OscilloscopeGrid
 
 class ChannelMarker(QGraphicsObject):
-    """Triángulo CH1 de tamaño fijo, arrastrable sobre el eje izquierdo."""
+    """Marcador de cero de cada canal, arrastrable en divisiones."""
 
-    def __init__(self, plot):
+    def __init__(self, plot, channel=1):
         super().__init__()
         self.plot = plot
+        self.channel = channel
         self.setZValue(40)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.SizeVerCursor)
-        self.setToolTip("CH1 · Posición de 0 V. Arrastrá para mover el canal.")
+        self.setToolTip(f"CH{channel} · Posición de cero. Arrastrá para mover el canal.")
 
     def boundingRect(self):
         return QRectF(-2, -13, 32, 26)
@@ -28,9 +29,8 @@ class ChannelMarker(QGraphicsObject):
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(painter.RenderHint.Antialiasing)
         
-        color = PLOT_COLORS[
-            self.plot.display_theme
-        ]["ch1"]
+        color = (PLOT_COLORS[self.plot.display_theme]["ch1"]
+                 if self.channel == 1 else "#38cfff")
 
         painter.setPen(QPen(QColor(color).darker(130), 1))
         painter.setBrush(QBrush(QColor(color)))
@@ -40,7 +40,7 @@ class ChannelMarker(QGraphicsObject):
         ]))
         painter.setPen(QColor("#171717"))
         painter.drawText(QRectF(1, -10, 16, 20),
-                         Qt.AlignmentFlag.AlignCenter, "1")
+                         Qt.AlignmentFlag.AlignCenter, str(self.channel))
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -51,7 +51,7 @@ class ChannelMarker(QGraphicsObject):
         # posición actual del marcador porque se mueve junto con el rango Y.
         self._drag_start_scene_y = event.scenePos().y()
         self._drag_start_divisions = (
-            -self.plot.vertical_offset / self.plot.volts_per_division
+            self.plot.channel_positions[self.channel]
         )
         event.accept()
 
@@ -77,7 +77,10 @@ class ChannelMarker(QGraphicsObject):
 
         # El controlador es el único que cambia el offset y actualiza
         # el gráfico. Así evitamos actualizaciones duplicadas.
-        self.plot.vertical_position_changed.emit(divisions)
+        if self.channel == 1:
+            self.plot.vertical_position_changed.emit(divisions)
+        else:
+            self.plot.ch2_position_changed.emit(divisions)
         event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -93,6 +96,7 @@ class OscilloscopePlot(QWidget):
     horizontal_position_changed = Signal(float)
     vertical_position_changed = Signal(float)
     cursor_readout_changed = Signal(str)
+    ch2_position_changed = Signal(float)
 
     def __init__(
         self,
@@ -125,6 +129,11 @@ class OscilloscopePlot(QWidget):
         self._cursor_updating = False
         self._cursor_signal_x = np.array([], dtype=float)
         self._cursor_signal_y = np.array([], dtype=float)
+        self.channel_scales = {1: self.volts_per_division, 2: self.volts_per_division}
+        self.channel_positions = {1: -self.vertical_offset / self.volts_per_division, 2: 0.0}
+        self.channel_visible = {1: True, 2: True}
+        self.trigger_channel = 1
+        self._raw_channels = None
         self.display_theme = "dark"
         self.create_interface()
             
@@ -204,6 +213,7 @@ class OscilloscopePlot(QWidget):
 
         # Contraste del marcador CH1.
         self.channel_marker.update()
+        self.channel_marker_ch2.update()
 
         # Repintar sin cambiar escalas ni muestras.
         self.plot_widget.update()
@@ -236,8 +246,8 @@ class OscilloscopePlot(QWidget):
 
         self.plot_widget.setLabel(
             "left",
-            "Tensión",
-            units="V",
+            "Posición vertical",
+            units="div",
         )
 
         self.plot_widget.setLabel(
@@ -274,6 +284,11 @@ class OscilloscopePlot(QWidget):
             pen=pg.mkPen("#e3c84b", width=1),
         )
         self.curve.setZValue(5)
+        self.curve_ch2 = self.plot_widget.plot(pen=pg.mkPen("#38cfff", width=2))
+        self.curve_ch2.setZValue(5)
+        self.channel_legend = pg.TextItem(anchor=(0, 0), color="#a8b5c8")
+        self.plot_widget.addItem(self.channel_legend, ignoreBounds=True)
+        self.channel_legend.setZValue(30)
 
         # ------------------------------------------------------------
         # NIVEL DE TRIGGER
@@ -354,6 +369,8 @@ class OscilloscopePlot(QWidget):
         # Marcador independiente: no dibuja ninguna línea horizontal.
         self.channel_marker = ChannelMarker(self)
         self.plot_widget.scene().addItem(self.channel_marker)
+        self.channel_marker_ch2 = ChannelMarker(self, 2)
+        self.plot_widget.scene().addItem(self.channel_marker_ch2)
         view = self.plot_widget.getViewBox()
         view.sigRangeChanged.connect(self._update_channel_marker)
         view.sigResized.connect(self._update_channel_marker)
@@ -368,27 +385,57 @@ class OscilloscopePlot(QWidget):
         """Fija el triángulo al borde izquierdo y a la altura de 0 V."""
         view = self.plot_widget.getViewBox()
         scene_rect = view.sceneBoundingRect()
-        zero_scene_y = view.mapViewToScene(QPointF(0.0, 0.0)).y()
-        # Posición siempre visible, aun en los extremos ±4 divisiones.
-        y = float(np.clip(zero_scene_y, scene_rect.top() + 12,
-                          scene_rect.bottom() - 12))
-        self.channel_marker.setPos(scene_rect.left() - 27, y)
+        for ch, marker in ((1, self.channel_marker), (2, self.channel_marker_ch2)):
+            y = view.mapViewToScene(QPointF(0.0, self.channel_positions[ch])).y()
+            y = float(np.clip(y, scene_rect.top() + 12, scene_rect.bottom() - 12))
+            marker.setPos(scene_rect.left() - 27, y)
+            marker.setVisible(self.channel_visible[ch])
 
     # ================================================================
     # RANGOS VISIBLES
     # ================================================================
 
     def vertical_range(self):
-        half_range = (
-            self.volts_per_division
-            * self.vertical_divisions
-            / 2
-        )
+        half = self.vertical_divisions / 2
+        return -half, half
 
-        return (
-            self.vertical_offset - half_range,
-            self.vertical_offset + half_range,
-        )
+    def _to_display(self, value, channel):
+        return np.asarray(value) / self.channel_scales[channel] + self.channel_positions[channel]
+
+    def _from_display(self, value, channel):
+        return (np.asarray(value) - self.channel_positions[channel]) * self.channel_scales[channel]
+
+    def set_channel_settings(self, channel, *, scale=None, position=None, visible=None):
+        if channel not in (1, 2):
+            raise ValueError("Canal inválido")
+        if scale is not None:
+            if not np.isfinite(scale) or scale <= 0:
+                raise ValueError("Escala inválida")
+            self.channel_scales[channel] = float(scale)
+        if position is not None:
+            self.channel_positions[channel] = float(np.clip(position, -4, 4))
+        if visible is not None:
+            self.channel_visible[channel] = bool(visible)
+        self._refresh_channel_curves()
+        self.update_scales()
+
+    def set_trigger_channel(self, channel):
+        if channel not in (1, 2):
+            raise ValueError("Canal inválido")
+        self.trigger_channel = channel
+        self.update_scales()
+
+    def _refresh_channel_curves(self):
+        if self._raw_channels is not None:
+            for ch, curve in ((1, self.curve), (2, self.curve_ch2)):
+                curve.setData(self._cursor_signal_x, self._to_display(self._raw_channels[:, ch-1], ch))
+        self.curve.setVisible(self.channel_visible[1])
+        self.curve_ch2.setVisible(self.channel_visible[2])
+        text = "   ".join(f"CH{ch}: {self.channel_scales[ch]:g}/div" +
+                           ("" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
+        self.channel_legend.setText(text + f" · Trigger CH{self.trigger_channel} · USB sin calibrar")
+        self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
+        self._refresh_cursors()
 
     def update_scales(self):
         total_time = (
@@ -410,10 +457,11 @@ class OscilloscopePlot(QWidget):
         )
 
         # Cambiar la escala no modifica el umbral.
-        self.trigger_line.setValue(self.trigger_level)
+        self.trigger_line.setValue(float(self._to_display(self.trigger_level, self.trigger_channel)))
 
         self._update_time_reference()
         self._update_trigger_notice()
+        self._refresh_channel_curves()
         if hasattr(self, "channel_marker"):
             self._update_channel_marker()
         if hasattr(self, "cursor_lines"):
@@ -458,7 +506,7 @@ class OscilloscopePlot(QWidget):
             y_max,
         )
 
-        outside = not y_min <= self.trigger_level <= y_max
+        outside = not y_min <= self._to_display(self.trigger_level, self.trigger_channel) <= y_max
 
         if outside:
             self.trigger_notice.setText(
@@ -479,6 +527,7 @@ class OscilloscopePlot(QWidget):
             np.clip(line.value(), y_min, y_max)
         )
 
+        level = float(self._from_display(level, self.trigger_channel))
         self.set_trigger_level(level)
         self.trigger_level_changed.emit(level)
 
@@ -536,15 +585,21 @@ class OscilloscopePlot(QWidget):
             time_axis += self.horizontal_position
 
         self._cursor_signal_x = time_axis.copy()
-        self._cursor_signal_y = np.asarray(signal, dtype=float).copy()
-        self.curve.setData(time_axis, signal)
+        data = np.asarray(signal, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError("Se requieren muestras (N, 2)")
+        self._raw_channels = data.copy()
+        self._cursor_signal_y = data[:, 0].copy()
+        self._refresh_channel_curves()
         self._refresh_cursors()
 
     def clear_signal(self):
         """Limpia la traza conservando escalas y referencias."""
         self._cursor_signal_x = np.array([], dtype=float)
         self._cursor_signal_y = np.array([], dtype=float)
+        self._raw_channels = None
         self.curve.setData([], [])
+        self.curve_ch2.setData([], [])
         self._refresh_cursors()
 
     # ================================================================
@@ -571,7 +626,7 @@ class OscilloscopePlot(QWidget):
             )
 
         self.volts_per_division = value
-        self.update_scales()
+        self.set_channel_settings(1, scale=value)
 
     def set_trigger_level(self, level):
         """Actualiza el nivel sin emitir trigger_level_changed."""
@@ -581,7 +636,7 @@ class OscilloscopePlot(QWidget):
             raise ValueError("El nivel de trigger debe ser finito.")
 
         self.trigger_level = level
-        self.trigger_line.setValue(level)
+        self.trigger_line.setValue(float(self._to_display(level, self.trigger_channel)))
 
         self.trigger_line.setToolTip(
             f"Trigger: {level:+.6g} V\n"
@@ -612,7 +667,7 @@ class OscilloscopePlot(QWidget):
             raise ValueError("El offset vertical debe ser finito.")
 
         self.vertical_offset = offset
-        self.update_scales()
+        self.set_channel_settings(1, position=-offset / self.volts_per_division)
 
     def set_horizontal_position(self, position):
         """Cambia el origen del eje X, expresado en segundos."""
@@ -695,8 +750,8 @@ class OscilloscopePlot(QWidget):
             if mode == 'Off':
                 result = 'Cursores desactivados'
             elif is_voltage:
-                a, b = values
-                result = (f'C1: {a:+.6g} V    C2: {b:+.6g} V\n'
+                a, b = [float(self._from_display(v, 1)) for v in values]
+                result = (f'CH1 · C1: {a:+.6g} V    C2: {b:+.6g} V\n'
                           f'ΔV: {b-a:+.6g} V  |ΔV|: {abs(b-a):.6g} V')
             elif mode == 'Manual':
                 a, b = values
@@ -718,7 +773,7 @@ class OscilloscopePlot(QWidget):
                     for i, t in enumerate(values):
                         if x[0] <= t <= x[-1]:
                             v = float(np.interp(t, x, y))
-                            self.cursor_points[i].setData([t], [v])
+                            self.cursor_points[i].setData([t], [float(self._to_display(v, 1))])
                             samples.append(v)
                         else:
                             self.cursor_points[i].setData([], [])
@@ -726,7 +781,7 @@ class OscilloscopePlot(QWidget):
                     if all(v is not None for v in samples):
                         a, b = values
                         va, vb = samples
-                        result = (f'C1: t={a:.6g} s, V={va:+.6g} V\n'
+                        result = (f'CH1 · C1: t={a:.6g} s, V={va:+.6g} V\n'
                                   f'C2: t={b:.6g} s, V={vb:+.6g} V\n'
                                   f'Δt={b-a:+.6g} s   ΔV={vb-va:+.6g} V')
                     else:

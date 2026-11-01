@@ -18,6 +18,7 @@ from gui.widgets.drag_knob import DragKnob
 
 
 class TriggerControls(QGroupBox):
+    source_changed = Signal(int)
     level_changed = Signal(float)
     slope_changed = Signal(str)
     mode_changed = Signal(str)
@@ -34,6 +35,13 @@ class TriggerControls(QGroupBox):
 
     def create_interface(self):
         layout = QVBoxLayout(self)
+        self.source_combo = QComboBox()
+        self.source_combo.addItem("Trigger: CH1", 1)
+        self.source_combo.addItem("Trigger: CH2", 2)
+        self.source_combo.currentIndexChanged.connect(
+            lambda _index: self.source_changed.emit(self.source_combo.currentData()))
+        layout.addWidget(self.source_combo)
+
         layout.setContentsMargins(8, 12, 8, 8)
         layout.setSpacing(5)
 
@@ -227,3 +235,9 @@ class TriggerControls(QGroupBox):
         if value == "Single":
             return
         self._select(self.mode_combo, value, value)
+
+
+    def set_source(self, channel):
+        blocker = QSignalBlocker(self.source_combo)
+        self.source_combo.setCurrentIndex(self.source_combo.findData(channel))
+        del blocker

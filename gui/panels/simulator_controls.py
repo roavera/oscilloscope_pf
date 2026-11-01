@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (
 class SimulatorControls(QGroupBox):
     settings_changed = Signal(dict)
 
-    def __init__(self, parent=None):
-        super().__init__("Generador Blackpill — CH1", parent)
+    def __init__(self, parent=None, channel="CH1"):
+        super().__init__(f"Generador Blackpill — {channel}", parent)
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.waveform = QComboBox()
@@ -46,10 +46,14 @@ class SimulatorControls(QGroupBox):
         return spin
 
     def _emit_settings(self, *_):
-        self.settings_changed.emit({
+        self.settings_changed.emit(self.get_settings())
+
+    def get_settings(self):
+        return {
             "waveform": self.waveform.currentData(),
             "frequency": self.frequency.value(),
             "amplitude": self.amplitude.value(),
             "offset": self.offset.value(),
             "noise": self.noise.value(),
-        })
+        }
+

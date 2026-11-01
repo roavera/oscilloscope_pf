@@ -82,10 +82,15 @@ class OscilloscopeControls(QWidget):
 
         self.acquisition_controls = AcquisitionControls()
         self.ch1_controls = VerticalControls(channel="CH1")
+        self.ch2_controls = VerticalControls(channel="CH2")
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
         self.cursor_controls = CursorControls()
+        self.cursor_controls.setToolTip("Los cursores de tensión y Track se refieren a CH1.")
         self.simulator_controls = SimulatorControls()
+        self.simulator_controls_ch2 = SimulatorControls(channel="CH2")
+        self.simulator_controls_ch2.waveform.setCurrentIndex(1)
+        self.simulator_controls_ch2.frequency.setValue(500.0)
 
         for panel in (
             self.acquisition_controls,
@@ -160,6 +165,7 @@ class OscilloscopeControls(QWidget):
         upper_row.addWidget(self.trigger_controls, 1)
         controls_layout.addLayout(upper_row)
         controls_layout.addWidget(self.ch1_controls)
+        controls_layout.addWidget(self.ch2_controls)
         controls_layout.addStretch(1)
         self.pages.addWidget(controls_page)
 
@@ -194,6 +200,7 @@ class OscilloscopeControls(QWidget):
         simulator_layout.setContentsMargins(0, 0, 0, 0)
         self.simulator_section = self.simulator_controls
         simulator_layout.addWidget(self.simulator_section)
+        simulator_layout.addWidget(self.simulator_controls_ch2)
         simulator_layout.addStretch(1)
         self.pages.addWidget(simulator_page)
 

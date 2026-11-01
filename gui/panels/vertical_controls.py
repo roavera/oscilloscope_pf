@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QComboBox,
     QPushButton,
-    QSizePolicy,
+    QSizePolicy, QCheckBox,
 )
 
 from gui.widgets.drag_knob import DragKnob
@@ -20,6 +20,7 @@ from gui.widgets.drag_knob import DragKnob
 class VerticalControls(QGroupBox):
     volts_per_division_changed = Signal(float)
     position_changed = Signal(float)
+    visibility_changed = Signal(bool)
 
     def __init__(self, channel="CH1", parent=None):
         super().__init__(f"Vertical — {channel}", parent)
@@ -127,6 +128,10 @@ class VerticalControls(QGroupBox):
         columns.addWidget(position_panel, 1)
 
         layout.addLayout(columns)
+        self.visible_checkbox = QCheckBox(f"Mostrar {self.channel}")
+        self.visible_checkbox.setChecked(True)
+        self.visible_checkbox.toggled.connect(self.visibility_changed.emit)
+        layout.addWidget(self.visible_checkbox)
 
     def connect_signals(self):
         self.voltage_combo.currentIndexChanged.connect(
@@ -195,3 +200,4 @@ class VerticalControls(QGroupBox):
         self.position_knob.set_value(divisions)
         actual_position = self.position_knob.numeric_value()
         self.position_label.setText(f"{actual_position:+.2f} div")
+
