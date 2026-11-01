@@ -6,7 +6,7 @@ acquisition_error(str). La ventana principal debe aceptar is_connecting como
 estado válido al cambiar de fuente y habilitar su menú USB.
 
 STOP/SINGLE congelan la pantalla; disconnect_acquisition() detiene la fuente.
-Se muestra CH1. Las muestras USB siguen normalizadas, no calibradas en voltios.
+Se muestran CH1 y CH2 sincronizados. Las muestras USB siguen normalizadas, no calibradas en voltios.
 """
 
 from threading import Lock
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
-from acquisition.acquisition_buffer import AcquisitionBuffer
+from acquisition.stereo_buffer import StereoBuffer
 from acquisition.acquisition_processor import AcquisitionProcessor
 from trigger.edge_trigger import Edge_Trigger
 
@@ -47,7 +47,10 @@ class OscilloscopeWidget(QWidget):
 
         self.sample_rate = 48000
         self.blocksize = 2048
-        self.channels = 1
+        self.channels = 2
+        self.trigger_channel = 1
+        self.ch2_volts_per_division = 0.02
+        self.ch2_position_divisions = 0.0
 
         # ============================================================
         # PANTALLA Y ESCALAS
@@ -107,7 +110,7 @@ class OscilloscopeWidget(QWidget):
 
         self._buffer_lock = Lock()
 
-        # Copia de la última adquisición para cambiar el recorte
+        # Pares estéreo de la última adquisición para cambiar el recorte
         # horizontal incluso en STOP.
         self._last_display_buffer = None
         self._last_trigger_index = None
@@ -117,7 +120,7 @@ class OscilloscopeWidget(QWidget):
         # COMPONENTES
         # ============================================================
 
-        self.buffer = AcquisitionBuffer(self.sample_rate)
+        self.buffer = StereoBuffer(self.sample_rate)
         
         # Procesador de modos de adquisición
         self.acquisition_processor = AcquisitionProcessor()
@@ -149,6 +152,9 @@ class OscilloscopeWidget(QWidget):
             vertical_offset=self.vertical_offset,
         )
 
+        self.controls.ch2_controls.set_volts_per_division(self.ch2_volts_per_division)
+        self.controls.ch2_controls.set_position(self.ch2_position_divisions)
+        self.plot.set_channel_settings(2, scale=self.ch2_volts_per_division)
         self.cursor_controls = self.controls.cursor_controls
         self.create_interface()
         self.connect_signals()
@@ -261,6 +267,13 @@ class OscilloscopeWidget(QWidget):
 
         self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
+        self.controls.ch2_controls.volts_per_division_changed.connect(self.set_ch2_volts_per_division)
+        self.controls.ch2_controls.position_changed.connect(self.set_ch2_position)
+        self.plot.ch2_position_changed.connect(self.set_ch2_position)
+        for ch, panel in ((1, self.controls.ch1_controls), (2, self.controls.ch2_controls)):
+            panel.visibility_changed.connect(lambda visible, c=ch: self.plot.set_channel_settings(c, visible=visible))
+        self.controls.trigger_controls.source_changed.connect(self.set_trigger_channel)
+        self.controls.simulator_controls_ch2.settings_changed.connect(self._on_simulator_ch2_settings_changed)
         # Control horizontal.
         self.controls.time_per_division_changed.connect(
             self.set_time_per_division
@@ -429,15 +442,16 @@ class OscilloscopeWidget(QWidget):
             self._pending_discontinuity = True
         # Nunca modificar widgets ni el trigger desde este callback.
 
-    def _clear_trigger_history(self):
-        """Solo Qt: invalida las capturas del segmento anterior."""
+    def _clear_trigger_history(self, *, preserve_display=False):
+        """Reinicia el procesamiento; puede conservar la última captura visible."""
         self.trigger_found = False
         self.trigger.fractional_offset = 0.0
-        self.last_acquisition = None
-        self._last_display_buffer = None
-        self._last_trigger_index = None
-        self._last_fractional_offset = 0.0
-        self.plot.clear_signal()
+        if not preserve_display:
+            self.last_acquisition = None
+            self._last_display_buffer = None
+            self._last_trigger_index = None
+            self._last_fractional_offset = 0.0
+            self.plot.clear_signal()
         self.acquisition_processor.reset()
 
     def disconnect_acquisition(self):
@@ -467,7 +481,7 @@ class OscilloscopeWidget(QWidget):
         self.start_acquisition()
 
     def connect_blackpill(self, port=None, *, simulated=False):
-        """port=None busca el COM automáticamente. Solo CH1 en pantalla."""
+        """port=None busca el COM automáticamente. Adquisición estéreo."""
         if self._closed:
             return
         self.disconnect_acquisition()
@@ -493,21 +507,22 @@ class OscilloscopeWidget(QWidget):
         )
         self.start_acquisition()
     def _apply_simulator_panel(self):
-        panel = self.controls.simulator_controls
-        self._on_simulator_settings_changed({
-            "waveform": panel.waveform.currentData(),
-            "frequency": panel.frequency.value(),
-            "amplitude": panel.amplitude.value(),
-            "offset": panel.offset.value(),
-            "noise": panel.noise.value(),
-        })
+        for channel, panel in ((0, self.controls.simulator_controls),
+                               (1, self.controls.simulator_controls_ch2)):
+            self._configure_simulator_channel(channel, panel.get_settings())
 
-    def _on_simulator_settings_changed(self, settings):
+    def _configure_simulator_channel(self, channel, settings):
         if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
             try:
-                self.configure_simulator(channel=0, **settings)
+                self.configure_simulator(channel=channel, **settings)
             except (ValueError, RuntimeError) as exc:
                 self.acquisition_error.emit(str(exc))
+
+    def _on_simulator_settings_changed(self, settings):
+        self._configure_simulator_channel(0, settings)
+
+    def _on_simulator_ch2_settings_changed(self, settings):
+        self._configure_simulator_channel(1, settings)
 
     def configure_simulator(self, channel=0, **kwargs):
         """Actualiza la señal simulada sin reiniciar la adquisición."""
@@ -520,9 +535,10 @@ class OscilloscopeWidget(QWidget):
             raise ValueError("Frecuencia de muestreo inválida")
         with self._buffer_lock:
             self.sample_rate = rate
-            self.buffer = AcquisitionBuffer(max(1, int(np.ceil(rate))))
+            self.buffer = StereoBuffer(max(1, int(np.ceil(rate))))
             self._pending_discontinuity = False
             self._new_data = False
+        self.acquisition_processor.reset()
         self.display_samples = max(
             2, int(self.sample_rate * self.time_per_division
                    * self.horizontal_divisions)
@@ -536,14 +552,10 @@ class OscilloscopeWidget(QWidget):
         self.plot.clear_signal()
 
     def on_samples_received(self, data, generation=None):
-        """Recibe (N,C); CH1 se visualiza por ahora."""
+        """Recibe pares estéreo sin descartar ni desalinear canales."""
         samples = np.asarray(data, dtype=np.float32)
-        if samples.ndim == 2:
-            if samples.shape[1] not in (1, 2):
-                return
-            samples = samples[:, 0]
-        elif samples.ndim != 1:
-            return
+        if samples.ndim != 2 or samples.shape[1] != 2:
+            raise ValueError("La fuente debe entregar pares sincronizados (N, 2)")
         if samples.size == 0:
             return
         with self._buffer_lock:
@@ -559,7 +571,8 @@ class OscilloscopeWidget(QWidget):
 
     @Slot()
     def process_data(self):
-        if self._closed:
+        # Incluso una señal timeout ya encolada debe respetar STOP.
+        if self._closed or not self.running:
             return
 
         with self._buffer_lock:
@@ -571,7 +584,7 @@ class OscilloscopeWidget(QWidget):
                 self._new_data = False
 
         if discontinuity:
-            self._clear_trigger_history()
+            self._clear_trigger_history(preserve_display=True)
             self.update_controls_state()
         if data is None:
             return
@@ -580,7 +593,7 @@ class OscilloscopeWidget(QWidget):
             return
 
         trigger_index = self.trigger.find(
-            data,
+            data[:, self.trigger_channel - 1],
             self.display_samples,
         )
 
@@ -634,6 +647,7 @@ class OscilloscopeWidget(QWidget):
 
             if self.trigger_mode == "Single":
                 self.running = False
+                self.display_timer.stop()
 
         self.update_controls_state()
 
@@ -645,29 +659,19 @@ class OscilloscopeWidget(QWidget):
         El procesador aplica el modo de adquisición activo.
         """
 
-        processed = self.acquisition_processor.process(
-            acquisition,
-            channel=1,
-        )
+        processed = np.column_stack([
+            self.acquisition_processor.process(acquisition[:, ch - 1], channel=ch)
+            for ch in (1, 2)
+        ])
+        self._render_acquisition(processed, trigger_sample)
 
-        self.last_acquisition = processed
-
+    def _render_acquisition(self, samples, trigger_sample=None):
+        """Representa muestras sin ejecutar ni acumular el algoritmo."""
+        self.last_acquisition = np.asarray(samples, dtype=np.float32).copy()
         self.plot.set_signal(
-            processed,
+            self.last_acquisition,
             self.sample_rate,
             trigger_sample=trigger_sample,
-        )
-        
-        processed = self.acquisition_processor.process(
-            acquisition,
-            channel=1,
-        )
-
-        print(
-            f"Modo: {self.acquisition_processor.get_mode()} | "
-            f"Entrada: {len(acquisition)} | "
-            f"Salida: {len(processed)} | "
-            f"Sin cambios: {np.array_equal(acquisition, processed)}"
         )
 
     def _redraw_last_acquisition(self):
@@ -698,7 +702,7 @@ class OscilloscopeWidget(QWidget):
                 samples_before + self._last_fractional_offset
             )
 
-            self._show_acquisition(
+            self._render_acquisition(
                 acquisition,
                 trigger_sample=trigger_sample,
             )
@@ -712,7 +716,7 @@ class OscilloscopeWidget(QWidget):
                 return
 
             acquisition = data[-self.display_samples:].copy()
-            self._show_acquisition(acquisition)
+            self._render_acquisition(acquisition)
 
     # ================================================================
     # ESTADO
@@ -757,6 +761,8 @@ class OscilloscopeWidget(QWidget):
         if not np.isfinite(value) or value <= 0:
             return
 
+        if value != self.time_per_division:
+            self.acquisition_processor.reset()
         self.time_per_division = value
 
         self.display_samples = max(
@@ -795,6 +801,8 @@ class OscilloscopeWidget(QWidget):
             / self.horizontal_divisions
         )
 
+        if self.trigger.position != self.trigger_position:
+            self.acquisition_processor.reset()
         self.trigger.set_position(self.trigger_position)
         self.plot.set_trigger_position(self.trigger_position)
 
@@ -807,6 +815,35 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
     # CONTROL VERTICAL
     # ================================================================
+
+    def set_ch2_volts_per_division(self, value):
+        value = float(value)
+        if not np.isfinite(value) or value <= 0:
+            return
+        self.ch2_volts_per_division = value
+        self.controls.ch2_controls.set_volts_per_division(value)
+        self.plot.set_channel_settings(2, scale=value)
+        self.update_trigger_range()
+
+    def set_ch2_position(self, divisions):
+        if not np.isfinite(divisions):
+            return
+        self.ch2_position_divisions = float(np.clip(round(divisions, 2), -4, 4))
+        self.controls.ch2_controls.set_position(self.ch2_position_divisions)
+        self.plot.set_channel_settings(2, position=self.ch2_position_divisions)
+        self.update_trigger_range()
+
+    def set_trigger_channel(self, channel):
+        if channel not in (1, 2) or channel == self.trigger_channel:
+            return
+        self.trigger_channel = channel
+        self.acquisition_processor.reset()
+        self.trigger_found = False
+        self.plot.set_trigger_channel(channel)
+        self.controls.trigger_controls.set_source(channel)
+        # La última captura conserva su referencia; la próxima usa la nueva fuente.
+        self.update_trigger_range()
+        self.update_controls_state()
 
     def set_volts_per_division(self, value):
         value = float(value)
@@ -855,7 +892,10 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def update_trigger_range(self):
-        minimum, maximum = self.plot.vertical_range()
+        scale = self.volts_per_division if self.trigger_channel == 1 else self.ch2_volts_per_division
+        position = self.vertical_position_divisions if self.trigger_channel == 1 else self.ch2_position_divisions
+        minimum = (-self.vertical_divisions / 2 - position) * scale
+        maximum = (self.vertical_divisions / 2 - position) * scale
 
         self.controls.set_trigger_range(
             minimum,
@@ -868,6 +908,8 @@ class OscilloscopeWidget(QWidget):
         if not np.isfinite(value):
             return
 
+        if value != self.trigger_level:
+            self.acquisition_processor.reset()
         self.trigger_level = value
 
         self.trigger.set_level(value)
@@ -881,6 +923,8 @@ class OscilloscopeWidget(QWidget):
         if value not in ("Rising", "Falling"):
             return
 
+        if value != self.trigger_slope:
+            self.acquisition_processor.reset()
         self.trigger_slope = value
 
         self.trigger.set_slope(value)
@@ -897,6 +941,8 @@ class OscilloscopeWidget(QWidget):
             self.single()
             return
 
+        if self.trigger_mode != value:
+            self.acquisition_processor.reset()
         self.trigger_mode = value
         self.single_mode = False
         self.trigger_found = False
@@ -929,49 +975,37 @@ class OscilloscopeWidget(QWidget):
             self.single()
             return
 
+        self.acquisition_processor.reset()
         self.running = True
         self.trigger_found = False
+        self.display_timer.start()
 
         self.update_controls_state()
 
     def stop(self):
         """Congela la pantalla sin desconectar la fuente de datos."""
 
-        if self._closed or not self.running:
+        if self._closed:
             return
 
         self.running = False
-
+        self.display_timer.stop()
+        # No limpiar ni volver a recortar la captura mostrada.
         self.update_controls_state()
 
 
     def toggle_run_stop(self):
-        if self._closed or self.acquisition.is_connecting:
-            return
-        if self._audio_error is not None or not self.acquisition.is_running:
-            self.start_acquisition()
-            return
-
         if self.running:
-            # Se congela la adquisición mostrada.
-            # El audio continúa alimentando el buffer.
-            self.running = False
-
-        elif self.trigger_mode == "Single":
-            self.single()
-            return
-
+            self.stop()
         else:
-            self.trigger_found = False
-            self.running = True
-
-        self.update_controls_state()
+            self.run()
 
     def single(self):
         if (self._closed or self._audio_error is not None
                 or not self.acquisition.is_running):
             return
 
+        self.acquisition_processor.reset()
         self.trigger_mode = "Single"
         self.single_mode = True
         self.trigger_found = False
@@ -983,6 +1017,7 @@ class OscilloscopeWidget(QWidget):
             self._new_data = False
 
         self.running = True
+        self.display_timer.start()
 
         self.controls.set_trigger_mode("Single")
         self.update_controls_state()
