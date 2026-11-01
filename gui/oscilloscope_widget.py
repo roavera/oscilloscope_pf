@@ -13,7 +13,7 @@ from threading import Lock
 
 import numpy as np
 
-from PySide6.QtCore import QSettings, QTimer, Slot, Signal, Qt
+from PySide6.QtCore import QSettings, QTimer, Slot, Signal, Qt, QSignalBlocker
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -268,6 +268,13 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def connect_signals(self):
+        resets = self.controls.reset_buttons
+        resets["acquisition"].clicked.connect(self.reset_accumulation)
+        resets["trigger"].clicked.connect(self.reset_trigger_controls)
+        resets["horizontal"].clicked.connect(self.reset_horizontal_controls)
+        resets["ch1"].clicked.connect(lambda _checked=False: self.reset_vertical_controls(1))
+        resets["ch2"].clicked.connect(lambda _checked=False: self.reset_vertical_controls(2))
+        resets["math"].clicked.connect(self.reset_math_controls)
         math_controls = self.controls.math_controls
         math_controls.configuration_changed.connect(self.set_math_configuration)
         math_controls.visibility_changed.connect(self.set_math_visible)
@@ -278,6 +285,8 @@ class OscilloscopeWidget(QWidget):
         )
 
         self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
+        self.cursor_controls.channel_changed.connect(self.plot.set_cursor_channel)
+        self.cursor_controls.labels_visible_changed.connect(self.plot.set_cursor_labels_visible)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
         self.controls.ch2_controls.volts_per_division_changed.connect(self.set_ch2_volts_per_division)
         self.controls.ch2_controls.position_changed.connect(self.set_ch2_position)
@@ -366,6 +375,55 @@ class OscilloscopeWidget(QWidget):
                 minimum -= self.buffer.valid_samples
         self.capture_sequence.reset(minimum_trigger=minimum)
         self._last_sampling_trigger_id = minimum - 1
+
+    def reset_accumulation(self, _checked=False):
+        """Reinicia los historiales, manteniendo modo, N, conexión y RUN/STOP."""
+        if self._closed:
+            return
+        with self._buffer_lock:
+            self._new_data = False
+            # El reinicio siguiente ya atiende cualquier corte recibido.
+            self._pending_discontinuity = False
+        self._reset_processing()
+        self.trigger_found = False
+        self.update_controls_state()
+
+    def reset_trigger_controls(self, _checked=False):
+        self.set_trigger_channel(1)
+        self.set_trigger_level(0.0)
+        self.set_trigger_slope("Rising")
+        self.set_trigger_mode("Auto")
+
+    def reset_horizontal_controls(self, _checked=False):
+        self.set_time_per_division(0.001)
+        self.set_horizontal_position(0.0)
+
+    def reset_vertical_controls(self, channel):
+        if channel == 1:
+            self.set_volts_per_division(0.02)
+            self.set_vertical_position(0.0)
+            self.controls.ch1_controls.visible_checkbox.setChecked(True)
+        elif channel == 2:
+            self.set_ch2_volts_per_division(0.02)
+            self.set_ch2_position(0.0)
+            self.controls.ch2_controls.visible_checkbox.setChecked(True)
+        else:
+            raise ValueError("El canal debe ser 1 o 2")
+
+    def reset_math_controls(self, _checked=False):
+        """Defaults de MATH; los canales y sus acumulaciones se conservan."""
+        panel = self.controls.math_controls
+        widgets = (panel.scale_combo, panel.position_input, panel.visible_checkbox)
+        blockers = [QSignalBlocker(widget) for widget in widgets]
+        try:
+            panel.scale_combo.setCurrentIndex(panel.scale_combo.findData(0.02))
+            panel.position_input.setValue(0.0)
+            panel.visible_checkbox.setChecked(False)
+        finally:
+            del blockers
+        self.plot.set_math_settings(scale=0.02, position=0.0)
+        self.set_math_configuration("add", 1, 2)
+        self.set_math_visible(False)
 
     def set_math_visible(self, visible):
         self.plot.set_math_settings(visible=visible)

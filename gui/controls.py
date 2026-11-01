@@ -14,6 +14,7 @@ from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
 from gui.panels.simulator_controls import SimulatorControls
 from gui.widgets.cursor_controls import CursorControls
+from gui.widgets.section_reset_button import SectionResetButton
 
 
 class OscilloscopeControls(QWidget):
@@ -88,7 +89,7 @@ class OscilloscopeControls(QWidget):
         self.trigger_controls = TriggerControls()
         self.math_controls = MathControls()
         self.cursor_controls = CursorControls()
-        self.cursor_controls.setToolTip("Los cursores de tensión y Track se refieren a CH1.")
+        self.cursor_controls.setToolTip("Elegí CH1 o CH2 como referencia de los cursores de tensión y Track.")
         self.simulator_controls = SimulatorControls()
         self.simulator_controls_ch2 = SimulatorControls(channel="CH2")
         self.simulator_controls_ch2.waveform.setCurrentIndex(1)
@@ -115,6 +116,26 @@ class OscilloscopeControls(QWidget):
             self.horizontal_controls, self.ch1_controls, self.ch2_controls,
         ):
             self._compact_layout(panel.layout())
+
+        # Cabeceras compactas con botones de reset integrados en el recuadro.
+        self.reset_buttons = {}
+        for key, section, description in (
+            ("acquisition", self.acquisition_controls,
+             "Reiniciar acumulación: conserva modo, cantidad y última captura. En STOP espera RUN o SINGLE."),
+            ("trigger", self.trigger_controls,
+             "Restablecer Trigger: CH1, 0 V, flanco ascendente y modo Auto."),
+            ("horizontal", self.horizontal_controls,
+             "Restablecer Horizontal: 1 ms/div y posición 0 div."),
+            ("ch1", self.ch1_controls,
+             "Restablecer CH1: 20 mV/div, posición 0 div y mostrar canal."),
+            ("ch2", self.ch2_controls,
+             "Restablecer CH2: 20 mV/div, posición 0 div y mostrar canal."),
+            ("math", self.math_controls,
+             "Restablecer MATH: CH1 + CH2, 0.02 u.a./div, posición 0 div y ocultar."),
+        ):
+            button = SectionResetButton(section, description)
+            section.reset_button = button
+            self.reset_buttons[key] = button
 
         # Barra de navegación, siempre por encima de Adquisición.
         nav = QHBoxLayout()

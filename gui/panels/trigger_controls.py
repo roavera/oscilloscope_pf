@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.widgets.drag_knob import DragKnob
+from gui.widgets.compact_level_input import CompactLevelInput
 
 
 class TriggerControls(QGroupBox):
@@ -106,7 +107,7 @@ class TriggerControls(QGroupBox):
         level_title = QLabel("Nivel de disparo (V)")
         level_title.setWordWrap(True)
         fields.addWidget(level_title)
-        self.level_input = QDoubleSpinBox()
+        self.level_input = CompactLevelInput()
         self.level_input.setDecimals(9)
         self.level_input.setRange(-1e6, 1e6)
         self.level_input.setSuffix(" V")
@@ -119,7 +120,7 @@ class TriggerControls(QGroupBox):
         self.level_input.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
-        self.level_input.setStyleSheet("color:#e478c4;font-weight:600;")
+        self.level_input.setStyleSheet("color:#e478c4;font-weight:normal;padding-left:3px;padding-right:16px;")
         self.level_input.setToolTip(
             "Ingresá el nivel de tensión del disparo en voltios.\n"
             "Confirmá con Enter o saliendo del campo."
@@ -279,3 +280,4 @@ class TriggerControls(QGroupBox):
             self.source_combo.setCurrentIndex(self.source_combo.findData(channel))
         finally:
             del blocker
+

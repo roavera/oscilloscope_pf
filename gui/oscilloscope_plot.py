@@ -126,6 +126,8 @@ class OscilloscopePlot(QWidget):
 
         self.cursor_mode = "Off"
         self.cursor_orientation = "Tiempo"
+        self.cursor_channel = 1
+        self.cursor_labels_visible = True
         self._cursor_updating = False
         self._cursor_signal_x = np.array([], dtype=float)
         self._cursor_signal_y = np.array([], dtype=float)
@@ -839,7 +841,7 @@ class OscilloscopePlot(QWidget):
         self.update_scales()
 
     # ================================================================
-    # CURSORES: MANUAL (TIEMPO/TENSIÓN) Y TRACK (SOBRE CH1)
+    # CURSORES: MANUAL Y TRACK SOBRE CH1 O CH2
     # ================================================================
 
     def _create_cursors(self):
@@ -863,8 +865,27 @@ class OscilloscopePlot(QWidget):
             point.setZValue(29)
             self.plot_widget.addItem(point, ignoreBounds=True)
             self.cursor_points.append(point)
+        self.cursor_labels = []
+        for color in colors:
+            label = pg.TextItem(color=color, anchor=(0, 0),
+                                fill=pg.mkBrush(21, 26, 34, 235),
+                                border=pg.mkPen(color, width=0.6))
+            label.setZValue(31)
+            self.plot_widget.addItem(label, ignoreBounds=True)
+            label.hide()
+            self.cursor_labels.append(label)
         self._cursor_positions = [0.3, 0.7]
         self._cursor_initialized = False
+        self._refresh_cursors()
+
+    def set_cursor_channel(self, channel):
+        if channel not in (1, 2):
+            raise ValueError("La referencia de cursores debe ser CH1 o CH2")
+        self.cursor_channel = int(channel)
+        self._refresh_cursors()
+
+    def set_cursor_labels_visible(self, visible):
+        self.cursor_labels_visible = bool(visible)
         self._refresh_cursors()
 
     def set_cursor_mode(self, mode, orientation='Tiempo'):
@@ -873,9 +894,11 @@ class OscilloscopePlot(QWidget):
         if orientation not in ('Tiempo', 'Tensión'):
             return
         was_off = self.cursor_mode == 'Off'
+        old_voltage = self.cursor_mode == 'Manual' and self.cursor_orientation == 'Tensión'
+        new_voltage = mode == 'Manual' and orientation == 'Tensión'
         self.cursor_mode = mode
         self.cursor_orientation = orientation
-        if was_off and mode != 'Off':
+        if (was_off and mode != 'Off') or old_voltage != new_voltage:
             self._cursor_initialized = False
         self._refresh_cursors()
 
@@ -885,9 +908,13 @@ class OscilloscopePlot(QWidget):
         self._cursor_updating = True
         try:
             mode = self.cursor_mode
+            channel = self.cursor_channel
             is_voltage = mode == 'Manual' and self.cursor_orientation == 'Tensión'
             xmin, xmax = self.plot_widget.getViewBox().viewRange()[0]
             ymin, ymax = self.plot_widget.getViewBox().viewRange()[1]
+            # Rotar antes de ubicar: InfiniteLine cambia su coordenada activa.
+            for line in self.cursor_lines:
+                line.setAngle(0 if is_voltage else 90)
             if not self._cursor_initialized and mode != 'Off':
                 for i, line in enumerate(self.cursor_lines):
                     fraction = self._cursor_positions[i]
@@ -895,21 +922,24 @@ class OscilloscopePlot(QWidget):
                                   else xmin + fraction * (xmax-xmin))
                 self._cursor_initialized = True
             values = []
+            track_samples = [None, None]
+            texts = []
             for i, line in enumerate(self.cursor_lines):
                 line.setVisible(mode != 'Off')
-                line.setAngle(0 if is_voltage else 90)
                 lo, hi = (ymin, ymax) if is_voltage else (xmin, xmax)
                 value = float(np.clip(line.value(), lo, hi))
                 if abs(value - float(line.value())) > 1e-12:
                     line.setValue(value)
                 values.append(value)
                 self.cursor_points[i].setVisible(mode == 'Track')
+                texts.append(f'C{i+1} · t={value:.6g} s')
             if mode == 'Off':
                 result = 'Cursores desactivados'
             elif is_voltage:
-                a, b = [float(self._from_display(v, 1)) for v in values]
-                result = (f'CH1 · C1: {a:+.6g} V    C2: {b:+.6g} V\n'
+                a, b = [float(self._from_display(v, channel)) for v in values]
+                result = (f'CH{channel} · C1: {a:+.6g} V    C2: {b:+.6g} V\n'
                           f'ΔV: {b-a:+.6g} V  |ΔV|: {abs(b-a):.6g} V')
+                texts = [f'C{i+1} · CH{channel}: {v:+.6g} V' for i, v in enumerate((a, b))]
             elif mode == 'Manual':
                 a, b = values
                 dt = b-a
@@ -919,33 +949,48 @@ class OscilloscopePlot(QWidget):
                     result += f'    1/|Δt|: {1/abs(dt):.6g} Hz'
             else:
                 x = self._cursor_signal_x
-                y = self._cursor_signal_y
+                y = (self._raw_channels[:, channel-1] if self._raw_channels is not None
+                     else np.array([], dtype=float))
                 if x.size < 2 or y.size != x.size:
                     result = ('Track no disponible en Envolvente: hay dos límites por instante'
                               if self._raw_envelope is not None
-                              else 'Track: esperando muestras de CH1')
+                              else f'Track: esperando muestras de CH{channel}')
                     for point in self.cursor_points:
                         point.setData([], [])
                 else:
-                    # Interpolación lineal: valores en coordenadas físicas.
-                    samples = []
                     for i, t in enumerate(values):
                         if x[0] <= t <= x[-1]:
                             v = float(np.interp(t, x, y))
-                            self.cursor_points[i].setData([t], [float(self._to_display(v, 1))])
-                            samples.append(v)
+                            self.cursor_points[i].setData([t], [float(self._to_display(v, channel))])
+                            track_samples[i] = v
+                            texts[i] = f'C{i+1} · CH{channel}\nt={t:.6g} s\nV={v:+.6g} V'
                         else:
                             self.cursor_points[i].setData([], [])
-                            samples.append(None)
-                    if all(v is not None for v in samples):
+                            texts[i] = f'C{i+1} · CH{channel}\nt={t:.6g} s\nFuera de captura'
+                    if all(v is not None for v in track_samples):
                         a, b = values
-                        va, vb = samples
-                        result = (f'CH1 · C1: t={a:.6g} s, V={va:+.6g} V\n'
+                        va, vb = track_samples
+                        result = (f'CH{channel} · C1: t={a:.6g} s, V={va:+.6g} V\n'
                                   f'C2: t={b:.6g} s, V={vb:+.6g} V\n'
                                   f'Δt={b-a:+.6g} s   ΔV={vb-va:+.6g} V')
                     else:
                         result = 'Track: cursor fuera del tramo adquirido'
+            for i, label in enumerate(self.cursor_labels):
+                label.setVisible(mode != 'Off' and self.cursor_labels_visible)
+                label.setText(texts[i])
+                if is_voltage:
+                    label.setAnchor((0, 1 if values[i] < ymax-.5 else 0))
+                    label.setPos(xmin+.025*(xmax-xmin), values[i])
+                else:
+                    right = values[i] > (xmin+xmax)/2
+                    label.setAnchor((1 if right else 0, 0))
+                    x_label = values[i] + (-.012 if right else .012)*(xmax-xmin)
+                    if mode == 'Track' and track_samples[i] is not None:
+                        y_display = float(self._to_display(track_samples[i], channel))
+                        y_label = float(np.clip(y_display+.65, ymin+.9, ymax-.65))
+                    else:
+                        y_label = ymax-.7-.45*i
+                    label.setPos(x_label, y_label)
             self.cursor_readout_changed.emit(result)
         finally:
             self._cursor_updating = False
-

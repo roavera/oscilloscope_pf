@@ -1,21 +1,23 @@
 
-"""Panel de cursores Manual y Track para CH1."""
+"""Panel de cursores Manual y Track para CH1 o CH2."""
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import (
     QGroupBox,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QComboBox,
+    QComboBox, QCheckBox,
 )
 
 
 class CursorControls(QGroupBox):
     settings_changed = Signal(str, str)
+    channel_changed = Signal(int)
+    labels_visible_changed = Signal(bool)
 
     def __init__(self, parent=None):
-        super().__init__("CURSORES · CH1", parent)
+        super().__init__("CURSORES", parent)
 
         # ============================================================
         # INTERFAZ
@@ -49,6 +51,17 @@ class CursorControls(QGroupBox):
         row.addWidget(self.orientation)
 
         layout.addLayout(row)
+        channel_row = QHBoxLayout()
+        channel_row.addWidget(QLabel("Canal"))
+        self.channel = QComboBox()
+        self.channel.addItem("CH1", 1)
+        self.channel.addItem("CH2", 2)
+        channel_row.addWidget(self.channel, 1)
+        layout.addLayout(channel_row)
+        self.show_values = QCheckBox("Mostrar valores en gráfico")
+        self.show_values.setChecked(True)
+        self.show_values.setToolTip("Muestra u oculta las etiquetas junto a los cursores. La lectura del panel sigue disponible.")
+        layout.addWidget(self.show_values)
 
         # ============================================================
         # LECTURAS DE CURSORES
@@ -76,6 +89,10 @@ class CursorControls(QGroupBox):
             self._changed
         )
 
+        self.channel.currentIndexChanged.connect(
+            lambda _index: self.channel_changed.emit(int(self.channel.currentData())))
+        self.show_values.toggled.connect(self.labels_visible_changed.emit)
+
         # Estado inicial
         self._changed()
 
@@ -87,11 +104,13 @@ class CursorControls(QGroupBox):
         mode = self.mode.currentText()
         orientation = self.orientation.currentText()
 
-        # El eje puede modificarse en Manual y Track.
-        # Solo se deshabilita cuando los cursores están apagados.
-        self.orientation.setEnabled(
-            mode != "Off"
-        )
+        # Track sigue la señal en tiempos elegidos; Manual admite ambos ejes.
+        if mode == "Track":
+            blocker = QSignalBlocker(self.orientation)
+            self.orientation.setCurrentText("Tiempo")
+            del blocker
+            orientation = "Tiempo"
+        self.orientation.setEnabled(mode == "Manual")
 
         # Informar los cambios al osciloscopio.
         self.settings_changed.emit(
@@ -106,3 +125,4 @@ class CursorControls(QGroupBox):
     def set_readout(self, text):
         """Actualiza las mediciones mostradas."""
         self.readout.setText(text)
+
