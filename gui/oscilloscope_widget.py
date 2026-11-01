@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QSplitter,
-    QScrollArea,
+    QLayout,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -194,7 +195,7 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def create_interface(self):
-        """Display amplio y panel lateral compacto, con desplazamiento de respaldo."""
+        """Display y panel lateral fijo, sin área de desplazamiento."""
         self._layout_settings = QSettings("OsciloscopioPF", "Osciloscopio")
 
         layout = QHBoxLayout(self)
@@ -208,31 +209,25 @@ class OscilloscopeWidget(QWidget):
         self.plot.setMinimumWidth(320)
         self.splitter.addWidget(self.plot)
 
-        # Los paneles compactos deben determinar su altura natural.
-        # La barra vertical solo aparece si la ventana es demasiado baja.
-        self.controls_scroll = QScrollArea(self.splitter)
-        self.controls_scroll.setWidgetResizable(True)
-        self.controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.controls_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.controls_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        # QWidget común: todos los controles de la página quedan en pantalla.
+        # Se conserva el nombre del atributo por compatibilidad.
+        self.controls_scroll = QWidget(self.splitter)
         self.controls_scroll.setMinimumWidth(400)
-
-        right_container = QWidget()
-        right_layout = QVBoxLayout(right_container)
+        self.controls_scroll.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        right_layout = QVBoxLayout(self.controls_scroll)
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(0)
+        right_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         right_layout.addWidget(self.controls)
-        right_layout.addStretch(1)
-        self.controls_scroll.setWidget(right_container)
         self.splitter.addWidget(self.controls_scroll)
 
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         layout.addWidget(self.splitter)
+        # El mínimo natural impide reducir la ventana hasta recortar controles.
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
         self._restoring_splitter = True
         self.splitter.splitterMoved.connect(self._save_splitter_width)
@@ -1043,3 +1038,4 @@ class OscilloscopeWidget(QWidget):
     def closeEvent(self, event):
         self.shutdown()
         event.accept()
+

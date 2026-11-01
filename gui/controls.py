@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Signal, QSettings
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy, QPushButton,
     QButtonGroup, QStackedWidget, QLabel, QFrame,
 )
 from PySide6.QtCore import Qt
@@ -75,10 +75,10 @@ class OscilloscopeControls(QWidget):
     # ============================================================
 
     def create_interface(self):
-        """Navegación lateral sin cambiar el ancho del display."""
+        """Adquisición fija y controles organizados en dos columnas."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(7)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
 
         self.acquisition_controls = AcquisitionControls()
         self.ch1_controls = VerticalControls(channel="CH1")
@@ -95,15 +95,24 @@ class OscilloscopeControls(QWidget):
         for panel in (
             self.acquisition_controls,
             self.ch1_controls,
+            self.ch2_controls,
             self.horizontal_controls,
             self.trigger_controls,
             self.cursor_controls,
             self.simulator_controls,
+            self.simulator_controls_ch2,
         ):
             panel.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Preferred,
             )
+
+        # Compactar espacios sin alterar rangos, señales ni valores.
+        for panel in (
+            self.acquisition_controls, self.trigger_controls,
+            self.horizontal_controls, self.ch1_controls, self.ch2_controls,
+        ):
+            self._compact_layout(panel.layout())
 
         # Barra de navegación, siempre por encima de Adquisición.
         nav = QHBoxLayout()
@@ -156,17 +165,27 @@ class OscilloscopeControls(QWidget):
 
         # Página 0: controles físicos existentes.
         controls_page = QWidget()
-        controls_layout = QVBoxLayout(controls_page)
+        controls_layout = QGridLayout(controls_page)
         controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(7)
-        upper_row = QHBoxLayout()
-        upper_row.setSpacing(7)
-        upper_row.addWidget(self.horizontal_controls, 1)
-        upper_row.addWidget(self.trigger_controls, 1)
-        controls_layout.addLayout(upper_row)
-        controls_layout.addWidget(self.ch1_controls)
-        controls_layout.addWidget(self.ch2_controls)
-        controls_layout.addStretch(1)
+        controls_layout.setHorizontalSpacing(4)
+        controls_layout.setVerticalSpacing(4)
+        controls_layout.setColumnStretch(0, 1)
+        controls_layout.setColumnStretch(1, 1)
+        controls_layout.addWidget(self.trigger_controls, 0, 0)
+        controls_layout.addWidget(self.horizontal_controls, 0, 1)
+        controls_layout.addWidget(self.ch1_controls, 1, 0, Qt.AlignmentFlag.AlignTop)
+        controls_layout.addWidget(self.ch2_controls, 1, 1, Qt.AlignmentFlag.AlignTop)
+        # Mismos anchos mínimos para las dos columnas. La primera fila
+        # se rellena completa para igualar la altura de ambos recuadros.
+        column_minimum = max(
+            panel.minimumSizeHint().width() for panel in (
+                self.trigger_controls, self.horizontal_controls,
+                self.ch1_controls, self.ch2_controls,
+            )
+        )
+        controls_layout.setColumnMinimumWidth(0, column_minimum)
+        controls_layout.setColumnMinimumWidth(1, column_minimum)
+        controls_layout.setRowStretch(2, 1)
         self.pages.addWidget(controls_page)
 
         # Página 1: espacio reservado para mediciones automáticas.
@@ -214,7 +233,33 @@ class OscilloscopeControls(QWidget):
         self.navigation_buttons["controls"].setChecked(True)
         self.navigation_buttons["simulator"].setVisible(False)
         self.pages.setCurrentIndex(0)
-        layout.addWidget(self.pages)
+        layout.addWidget(self.pages, 1)
+        self.pages.currentChanged.connect(self._update_page_size)
+        self._update_page_size(self.pages.currentIndex())
+
+    @staticmethod
+    def _compact_layout(layout):
+        """Reduce espacios de layouts existentes, respetando sus widgets."""
+        if layout is None:
+            return
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        for index in range(layout.count()):
+            nested = layout.itemAt(index).layout()
+            if nested is not None:
+                OscilloscopeControls._compact_layout(nested)
+
+    def _update_page_size(self, current):
+        """Solo la pestaña visible determina el tamaño mínimo del panel."""
+        for index in range(self.pages.count()):
+            page = self.pages.widget(index)
+            policy = (QSizePolicy.Policy.Preferred if index == current
+                      else QSizePolicy.Policy.Ignored)
+            page.setSizePolicy(policy, policy)
+            page.updateGeometry()
+        self.pages.layout().invalidate()
+        self.pages.updateGeometry()
+        self.updateGeometry()
 
     # ============================================================
     # VISIBILIDAD DEL SIMULADOR
