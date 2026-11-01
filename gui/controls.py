@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from gui.panels.vertical_controls import VerticalControls
+from gui.panels.math_controls import MathControls
 from gui.panels.horizontal_controls import HorizontalControls
 from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
@@ -85,6 +86,7 @@ class OscilloscopeControls(QWidget):
         self.ch2_controls = VerticalControls(channel="CH2")
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
+        self.math_controls = MathControls()
         self.cursor_controls = CursorControls()
         self.cursor_controls.setToolTip("Los cursores de tensión y Track se refieren a CH1.")
         self.simulator_controls = SimulatorControls()
@@ -126,6 +128,7 @@ class OscilloscopeControls(QWidget):
             ("controls", "CONTROLES"),
             ("measurements", "MEDICIONES"),
             ("cursors", "CURSORES"),
+            ("math", "MATH"),
             ("simulator", "SIMULADOR"),
         ):
             button = QPushButton(title, self)
@@ -223,9 +226,15 @@ class OscilloscopeControls(QWidget):
         simulator_layout.addStretch(1)
         self.pages.addWidget(simulator_page)
 
-        for index, key in enumerate(
-            ("controls", "measurements", "cursors", "simulator")
-        ):
+        math_page = QWidget()
+        math_layout = QVBoxLayout(math_page)
+        math_layout.setContentsMargins(0, 0, 0, 0)
+        math_layout.addWidget(self.math_controls)
+        math_layout.addStretch(1)
+        self.pages.addWidget(math_page)
+
+        for key, index in {"controls": 0, "measurements": 1, "cursors": 2,
+                           "simulator": 3, "math": 4}.items():
             self.navigation_buttons[key].clicked.connect(
                 lambda _checked=False, i=index: self.pages.setCurrentIndex(i)
             )
@@ -515,3 +524,4 @@ class OscilloscopeControls(QWidget):
     @property
     def single_button(self):
         return self.trigger_controls.single_button
+

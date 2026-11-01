@@ -65,3 +65,4 @@ class CaptureSequence:
             self._minimum_trigger = trigger_id + 1
             self._minimum_start = absolute_start + count + 1
             yield TriggeredCapture(aligned, before, trigger_id)
+

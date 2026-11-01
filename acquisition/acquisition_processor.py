@@ -22,7 +22,7 @@ Modos:
     roll
 
 NOTA:
-    Sampling y Average están implementados.
+    Sampling, Average y Envelope están implementados.
     Los demás modos se incorporarán progresivamente.
     FastAct y Roll requieren integración con la actualización de pantalla.
 ===============================================================================
@@ -35,6 +35,7 @@ import numpy as np
 
 from acquisition.modes.sampling import process_sampling
 from acquisition.modes.average import process_average
+from acquisition.modes.envelope import process_envelope, EnvelopeResult
 
 @dataclass
 class AcquisitionConfig:
@@ -77,6 +78,7 @@ class AcquisitionProcessor:
     )
 
     AVERAGE_OPTIONS = (4, 16, 32, 64, 128, 256)
+    ENVELOPE_OPTIONS = AVERAGE_OPTIONS
 
     DISPLAY_MODES = (FASTACT, ROLL)
 
@@ -96,6 +98,7 @@ class AcquisitionProcessor:
         self._processors = {
             self.SAMPLING: process_sampling,
             self.AVERAGE: process_average,
+            self.ENVELOPE: process_envelope,
         }
     # ============================================================
     # VALIDACIÓN
@@ -125,8 +128,11 @@ class AcquisitionProcessor:
                 "4, 16, 32, 64, 128 o 256"
             )
 
+        if (not self._positive_integer(config.envelope_count)
+                or config.envelope_count not in self.ENVELOPE_OPTIONS):
+            raise ValueError("envelope_count debe ser 4, 16, 32, 64, 128 o 256")
+
         for name in (
-            "envelope_count",
             "peak_bucket_size",
             "high_resolution_factor",
         ):
@@ -156,6 +162,12 @@ class AcquisitionProcessor:
         """
 
         self.configure(average_count=count)
+
+    def set_envelope_count(self, count):
+        self.configure(envelope_count=count)
+
+    def get_envelope_count(self):
+        return self.config.envelope_count
 
     def configure(self, **kwargs):
         """
@@ -204,7 +216,7 @@ class AcquisitionProcessor:
         El algoritmo debe aceptar:
             processor(samples, channel, config, state)
 
-        Sampling y Average ya vienen registrados.
+        Sampling, Average y Envelope ya vienen registrados.
 
         Los demás se registrarán al implementar
         los archivos de acquisition/modes/.
@@ -311,6 +323,8 @@ class AcquisitionProcessor:
             )
 
         if data.size == 0:
+            if self.config.mode == self.ENVELOPE:
+                return EnvelopeResult(data.copy(), data.copy())
             return data.copy()
 
         mode = self.config.mode
@@ -365,5 +379,6 @@ class AcquisitionProcessor:
         """Capturas acumuladas y objetivo; no copia los vectores del promedio."""
         self._validate_channel(channel)
         state = self._states.get(channel, {})
-        target = self.config.average_count if self.config.mode == self.AVERAGE else 1
+        target = {self.AVERAGE: self.config.average_count,
+                  self.ENVELOPE: self.config.envelope_count}.get(self.config.mode, 1)
         return int(state.get("count", 0)), target

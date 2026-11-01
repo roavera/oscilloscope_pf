@@ -28,6 +28,8 @@ from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.stereo_buffer import StereoBuffer
 from acquisition.acquisition_processor import AcquisitionProcessor
 from acquisition.capture_sequence import CaptureSequence
+from acquisition.modes.envelope import EnvelopeResult
+from processing.math_processor import MathTraceProcessor
 from trigger.edge_trigger import Edge_Trigger
 
 from gui.controls import OscilloscopeControls
@@ -102,6 +104,7 @@ class OscilloscopeWidget(QWidget):
         self.single_mode = False
         self.trigger_found = False
         self.last_acquisition = None
+        self.last_envelope = None
         self._last_render_trigger_sample = None
 
         self._closed = False
@@ -128,6 +131,11 @@ class OscilloscopeWidget(QWidget):
         # Procesador de modos de adquisición
         self.acquisition_processor = AcquisitionProcessor()
         self.acquisition_processor.set_mode("sampling")
+        self.math_processor = MathTraceProcessor(self.acquisition_processor.get_config())
+        self.last_math = None
+        self._pending_math_result = None
+        self._last_math_reference = None
+        self._math_error = None
         self.capture_sequence = CaptureSequence()
         self._last_sampling_trigger_id = -1
 
@@ -260,6 +268,11 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def connect_signals(self):
+        math_controls = self.controls.math_controls
+        math_controls.configuration_changed.connect(self.set_math_configuration)
+        math_controls.visibility_changed.connect(self.set_math_visible)
+        math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
+        math_controls.position_changed.connect(lambda value: self.plot.set_math_settings(position=value))
         self.controls.simulator_settings_changed.connect(
             self._on_simulator_settings_changed
         )
@@ -332,6 +345,9 @@ class OscilloscopeWidget(QWidget):
         self.controls.acquisition_controls.average_count_changed.connect(
             self.set_average_count
         )
+        self.controls.acquisition_controls.envelope_count_changed.connect(
+            self.set_envelope_count
+        )
 
 
     # ================================================================
@@ -341,6 +357,9 @@ class OscilloscopeWidget(QWidget):
     def _reset_processing(self, *, use_buffered=False):
         """Reinicia acumulación e IDs sin borrar la captura visible."""
         self.acquisition_processor.reset()
+        self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
+        self.math_processor.reset()
+        self._pending_math_result = None
         with self._buffer_lock:
             minimum = self.buffer.total_samples
             if use_buffered:
@@ -348,8 +367,53 @@ class OscilloscopeWidget(QWidget):
         self.capture_sequence.reset(minimum_trigger=minimum)
         self._last_sampling_trigger_id = minimum - 1
 
+    def set_math_visible(self, visible):
+        self.plot.set_math_settings(visible=visible)
+        self._update_math_status()
+
+    def set_math_configuration(self, operation, source_a, source_b):
+        result = self.math_processor.configure_math(
+            operation=operation, source_a=source_a, source_b=source_b,
+        )
+        self.controls.math_controls.set_configuration(self.math_processor.math.config)
+        self.plot.set_math_settings(expression=self.math_processor.math.expression)
+        self._math_error = None
+        self._render_math(result, self._last_math_reference)
+
+    def _update_math_status(self):
+        if self._math_error:
+            status = f"MATH: {self._math_error}"
+        elif not self.plot.math_visible:
+            status = "MATH oculta"
+        elif self.last_math is None:
+            status = "MATH: esperando captura válida"
+        else:
+            status = "MATH: " + ("captura congelada" if not self.running else "actualizando")
+        self.controls.math_controls.status_label.setText(status)
+
+    def _render_math(self, result, trigger_sample=None):
+        self._last_math_reference = trigger_sample
+        if result is None:
+            self.last_math = None
+            self.plot.clear_math()
+        elif isinstance(result, EnvelopeResult):
+            self.last_math = EnvelopeResult(result.minimum.copy(), result.maximum.copy())
+            self.plot.set_math_envelope(result.minimum, result.maximum, self.sample_rate, trigger_sample)
+        else:
+            self.last_math = np.asarray(result, dtype=np.float32).copy()
+            self.plot.set_math_signal(self.last_math, self.sample_rate, trigger_sample)
+        self._update_math_status()
+
+    def _redraw_math(self):
+        self._render_math(self.last_math, self._last_math_reference)
+
+    def _recut_sampling_math(self, acquisition, trigger_sample=None):
+        self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
+        result = self.math_processor.replace_sampling_capture(acquisition, self.sample_rate)
+        self._render_math(result, trigger_sample)
+
     def set_acquisition_mode(self, mode):
-        if mode not in ("sampling", "average"):
+        if mode not in ("sampling", "average", "envelope"):
             raise ValueError(f"Modo no disponible: {mode}")
         if mode != self.acquisition_processor.get_mode():
             self.acquisition_processor.set_mode(mode)
@@ -364,6 +428,14 @@ class OscilloscopeWidget(QWidget):
             self._reset_processing()
             self.trigger_found = False
         self.controls.acquisition_controls.set_average_count(count)
+        self.update_controls_state()
+
+    def set_envelope_count(self, count):
+        if count != self.acquisition_processor.get_envelope_count():
+            self.acquisition_processor.set_envelope_count(count)
+            self._reset_processing()
+            self.trigger_found = False
+        self.controls.acquisition_controls.set_envelope_count(count)
         self.update_controls_state()
 
     def start_acquisition(self):
@@ -467,10 +539,12 @@ class OscilloscopeWidget(QWidget):
         self.trigger.fractional_offset = 0.0
         if not preserve_display:
             self.last_acquisition = None
+            self.last_envelope = None
             self._last_display_buffer = None
             self._last_trigger_index = None
             self._last_fractional_offset = 0.0
             self.plot.clear_signal()
+            self.last_math = None
         self._reset_processing(use_buffered=True)
 
     def disconnect_acquisition(self):
@@ -570,10 +644,13 @@ class OscilloscopeWidget(QWidget):
         self.trigger_found = False
         self.single_mode = False
         self.last_acquisition = None
+        self.last_envelope = None
         self._last_display_buffer = None
         self._last_trigger_index = None
         self._last_fractional_offset = 0.0
         self.plot.clear_signal()
+        self.last_math = None
+        self._last_math_reference = None
 
     def on_samples_received(self, data, generation=None):
         """Recibe pares estéreo sin descartar ni desalinear canales."""
@@ -617,8 +694,8 @@ class OscilloscopeWidget(QWidget):
         if len(data) < self.display_samples:
             return
 
-        if self.acquisition_processor.get_mode() == "average":
-            self._process_average_captures(data, first_sample)
+        if self.acquisition_processor.get_mode() in ("average", "envelope"):
+            self._process_triggered_captures(data, first_sample)
             return
 
         trigger_index = self.trigger.find(
@@ -685,8 +762,8 @@ class OscilloscopeWidget(QWidget):
 
         self.update_controls_state()
 
-    def _process_average_captures(self, data, first_sample):
-        """Promedia ventanas nuevas con disparo; Auto no acumula barridos libres."""
+    def _process_triggered_captures(self, data, first_sample):
+        """Acumula ventanas nuevas; Auto no incorpora barridos libres."""
         result = None
         reference = None
         self.trigger_found = False
@@ -702,14 +779,41 @@ class OscilloscopeWidget(QWidget):
                 self.display_timer.stop()
                 break
         if result is not None:
-            self._render_acquisition(result, reference)
+            self._render_processed(result, reference)
         self.update_controls_state()
 
     def _process_acquisition(self, acquisition):
-        return np.column_stack([
+        results = [
             self.acquisition_processor.process(acquisition[:, ch - 1], channel=ch)
             for ch in (1, 2)
-        ])
+        ]
+        try:
+            self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
+            self._pending_math_result = self.math_processor.process(acquisition, self.sample_rate)
+            self._math_error = None
+        except ValueError as exc:
+            self._pending_math_result = None
+            self._math_error = str(exc)
+        if self.acquisition_processor.get_mode() == "envelope":
+            return EnvelopeResult(
+                np.column_stack([result.minimum for result in results]),
+                np.column_stack([result.maximum for result in results]),
+            )
+        return np.column_stack(results)
+
+    def _render_processed(self, result, trigger_sample=None):
+        if isinstance(result, EnvelopeResult):
+            self.last_envelope = EnvelopeResult(result.minimum.copy(), result.maximum.copy())
+            self.last_acquisition = None
+            self._last_render_trigger_sample = trigger_sample
+            self._last_display_buffer = None
+            self.plot.set_envelope(
+                self.last_envelope.minimum, self.last_envelope.maximum,
+                self.sample_rate, trigger_sample=trigger_sample,
+            )
+        else:
+            self._render_acquisition(result, trigger_sample)
+        self._render_math(self._pending_math_result, trigger_sample)
 
     def _show_acquisition(self, acquisition, trigger_sample=None):
         """
@@ -720,10 +824,11 @@ class OscilloscopeWidget(QWidget):
         """
 
         processed = self._process_acquisition(acquisition)
-        self._render_acquisition(processed, trigger_sample)
+        self._render_processed(processed, trigger_sample)
 
     def _render_acquisition(self, samples, trigger_sample=None):
         """Representa muestras sin ejecutar ni acumular el algoritmo."""
+        self.last_envelope = None
         self.last_acquisition = np.asarray(samples, dtype=np.float32).copy()
         self._last_render_trigger_sample = trigger_sample
         if self.acquisition_processor.get_mode() == "average":
@@ -737,6 +842,14 @@ class OscilloscopeWidget(QWidget):
     def _redraw_last_acquisition(self):
         """Redibuja usando únicamente el buffer guardado."""
 
+        if self.last_envelope is not None:
+            self.plot.set_envelope(
+                self.last_envelope.minimum, self.last_envelope.maximum,
+                self.sample_rate, trigger_sample=self._last_render_trigger_sample,
+            )
+            self._redraw_math()
+            return
+
         # Un promedio congelado conserva sus valores y su origen temporal.
         # Nunca sustituirlo por una captura cruda ni acumular al redibujar.
         if self.acquisition_processor.get_mode() == "average":
@@ -745,6 +858,7 @@ class OscilloscopeWidget(QWidget):
                     self.last_acquisition, self.sample_rate,
                     trigger_sample=self._last_render_trigger_sample,
                 )
+            self._redraw_math()
             return
 
         data = self._last_display_buffer
@@ -761,7 +875,9 @@ class OscilloscopeWidget(QWidget):
 
             if acquisition is None:
                 self.last_acquisition = None
+                self.last_envelope = None
                 self.plot.clear_signal()
+                self.last_math = None
                 return
 
             samples_before = int(
@@ -776,23 +892,28 @@ class OscilloscopeWidget(QWidget):
                 acquisition,
                 trigger_sample=trigger_sample,
             )
+            self._recut_sampling_math(acquisition, trigger_sample)
 
         else:
             # Sin disparo no existe una referencia temporal
             # para desplazar el recorte alrededor de un cruce.
             if len(data) < self.display_samples:
                 self.last_acquisition = None
+                self.last_envelope = None
                 self.plot.clear_signal()
+                self.last_math = None
                 return
 
             acquisition = data[-self.display_samples:].copy()
             self._render_acquisition(acquisition)
+            self._recut_sampling_math(acquisition)
 
     # ================================================================
     # ESTADO
     # ================================================================
 
     def update_controls_state(self):
+        self._update_math_status()
         if self._connection_state == "connecting":
             self.controls.show_state(False, "CONECTANDO...")
             return
@@ -819,13 +940,15 @@ class OscilloscopeWidget(QWidget):
         else:
             status = "RUN"
 
-        average = self.acquisition_processor.get_mode() == "average"
+        mode = self.acquisition_processor.get_mode()
+        accumulating = mode in ("average", "envelope")
         count, target = self.acquisition_processor.get_progress()
-        self.controls.acquisition_controls.show_average_progress(count, target)
-        if average:
+        self.controls.acquisition_controls.show_capture_progress(count, target)
+        if accumulating:
             if self.running and not self.trigger_found:
                 status += ": esperando disparo" if "esperando" not in status else ""
-            status += f" · AVG {count}/{target}"
+            label = "AVG" if mode == "average" else "ENV"
+            status += f" · {label} {count}/{target}"
         self.controls.show_state(self.running, status)
 
     # ================================================================

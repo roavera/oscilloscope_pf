@@ -30,3 +30,4 @@ def process_average(samples, channel, config, state):
     state["count"] = len(captures)
     state["acquisitions"] += 1
     return (state["total"] / len(captures)).astype(np.float32)
+
