@@ -42,28 +42,29 @@ class AcquisitionControls(QGroupBox):
 
         self.run_button.setStyleSheet("""
             QPushButton {background:#198754;color:white;border:0;border-radius:5px;
-                         font-weight:bold;padding:7px 8px;}
+                         font-weight:bold;padding:3px 6px;}
             QPushButton:hover:enabled {background:#157347;}
             QPushButton:disabled {background:#344d40;color:#8fa99a;}
         """)
         self.stop_button.setStyleSheet("""
             QPushButton {background:#dc3545;color:white;border:0;border-radius:5px;
-                         font-weight:bold;padding:7px 8px;}
+                         font-weight:bold;padding:3px 6px;}
             QPushButton:hover:enabled {background:#bb2d3b;}
             QPushButton:disabled {background:#57383d;color:#b09a9d;}
         """)
         self.settings_button.setStyleSheet("""
             QPushButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
-                         border-radius:5px;font-weight:bold;padding:7px 6px;}
+                         border-radius:5px;font-weight:bold;padding:3px 6px;}
             QPushButton:hover:enabled {background:#465d76;}
         """)
         for button in (self.run_button, self.stop_button, self.settings_button):
-            button.setMinimumHeight(34)
+            button.setMinimumHeight(26)
             buttons.addWidget(button, 1)
         layout.addLayout(buttons)
 
         self.status_label = QLabel("STOP")
         self.status_label.setWordWrap(True)
+        self.status_label.hide()
         layout.addWidget(self.status_label)
 
         # Se crea una sola vez: los combos conservan estado y conexiones.
@@ -165,6 +166,7 @@ class AcquisitionControls(QGroupBox):
         del blocker
 
     def _update_accumulation_controls(self):
+        self.settings_button.setText(self.mode_combo.currentText())
         self.peak_bucket_combo.setEnabled(self.mode_combo.currentData() == "peak_detect")
         enabled = self.mode_combo.currentData() == "average"
         self.average_count_combo.setEnabled(enabled)
@@ -210,6 +212,8 @@ class AcquisitionControls(QGroupBox):
         self._running = bool(running)
         self.status_label.setText(f"{status}: {error}" if error else str(status))
         self.status_label.setToolTip(error or "")
+        self.status_label.setVisible(bool(error))
+        self.setToolTip(f"{status}: {error}" if error else str(status))
         self._update_buttons()
 
     def set_actions_enabled(self, enabled):
@@ -259,5 +263,6 @@ class AcquisitionControls(QGroupBox):
         if not enabled and self.interpolation_combo.currentIndex() == index:
             raise ValueError("No se puede deshabilitar la interpolación seleccionada.")
         self.interpolation_combo.model().item(index).setEnabled(bool(enabled))
+
 
 

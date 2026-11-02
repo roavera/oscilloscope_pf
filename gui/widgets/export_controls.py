@@ -41,12 +41,14 @@ class ExportControls(QToolButton):
         self.busy=False
         self.last_directory=''
         self.job=None
-        self.setText('Guardar / Exportar')
-        self.setMinimumHeight(28)
+        self.setText('Exportar')
+        self.setToolTip('Guardar imagen PNG o exportar muestras CSV')
+        self.setFixedHeight(24)
+        self.setFixedWidth(110)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("""
             QToolButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
-                         border-radius:4px;padding:5px 18px;font-weight:bold;}
+                         border-radius:4px;padding:2px 16px;font-weight:bold;}
             QToolButton:hover {background:#465d76;}
             QToolButton::menu-indicator {subcontrol-position:right center;right:6px;}
         """)

@@ -4,7 +4,7 @@ from math import isfinite
 
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
+    QComboBox, QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.widgets.drag_knob import DragKnob
+from gui.widgets.position_knob import PositionKnob
 
 
 class HorizontalControls(QGroupBox):
@@ -52,6 +53,7 @@ class HorizontalControls(QGroupBox):
 
         time_column = QVBoxLayout()
         time_column.setSpacing(3)
+        time_column.setAlignment(Qt.AlignmentFlag.AlignTop)
         time_title = QLabel("Time/div")
         time_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.time_knob = DragKnob(
@@ -61,7 +63,7 @@ class HorizontalControls(QGroupBox):
             initial=3,
             reset_value=3,
             pixels_per_step=12.0,
-            size=52,
+            size=64,
         )
         self.time_knob.setToolTip(
             "Arrastrá hacia arriba para reducir Tiempo/div.\n"
@@ -80,31 +82,42 @@ class HorizontalControls(QGroupBox):
 
         position_column = QVBoxLayout()
         position_column.setSpacing(3)
+        position_column.setAlignment(Qt.AlignmentFlag.AlignTop)
         position_title = QLabel("Posición")
         position_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.position_knob = DragKnob(
-            minimum=-6.0,
-            maximum=6.0,
-            step=0.01,
-            initial=0.0,
-            reset_value=0.0,
-            pixels_per_step=1.0,
-            size=52,
-        )
-        self.position_knob.setToolTip(
-            "Ajuste horizontal en divisiones.\nDoble clic para centrar."
+        self.position_knob = PositionKnob(
+            minimum=-6.0, maximum=6.0, initial=0.0,
+            accent_color="#B0BDCC", size=64,
         )
         self.position_label = QLabel()
         self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.position_label.setToolTip("Desplazamiento horizontal en divisiones y tiempo")
-        self.center_button = QPushButton("0")
+        self.position_input = QDoubleSpinBox(self)
+        self.position_input.hide()
+        self.position_input.setRange(-6.0, 6.0)
+        self.position_input.setDecimals(2)
+        self.position_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.position_input.setSingleStep(0.01)
+        self.position_input.setSuffix(" div")
+        self.position_input.setKeyboardTracking(False)
+        self.position_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.position_input.setMinimumWidth(0)
+        self.position_input.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.position_input.setToolTip("Posición exacta en divisiones; Enter para confirmar")
+        self.position_input.setAccessibleName("Posición en divisiones")
+        self.center_button = QPushButton("0", self)
+        self.center_button.hide()
         self.center_button.setToolTip("Centrar posición horizontal")
         self.center_button.setFixedWidth(30)
         self.center_button.setFixedHeight(24)
         position_column.addWidget(position_title)
         position_column.addWidget(self.position_knob, 0, Qt.AlignmentFlag.AlignHCenter)
-        position_column.addWidget(self.position_label)
-        position_column.addWidget(self.center_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        
+        self.position_time_label = QLabel(self)
+        self.position_time_label.hide()
+        self.position_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        
 
         knobs_row.addLayout(time_column, 1)
         knobs_row.addLayout(position_column, 1)
@@ -116,6 +129,7 @@ class HorizontalControls(QGroupBox):
         self.time_knob.value_changed.connect(self._on_time_knob_changed)
         self.position_knob.value_changed.connect(self._on_position_changed)
         self.center_button.clicked.connect(self._center_position)
+        self.position_input.valueChanged.connect(self._on_position_changed)
 
     def _on_time_combo_changed(self, index):
         if index < 0:
@@ -174,11 +188,15 @@ class HorizontalControls(QGroupBox):
         if not isfinite(divisions):
             raise ValueError("La posición debe ser finita.")
         self.position_knob.set_value(divisions)
+        blocker = QSignalBlocker(self.position_input)
+        self.position_input.setValue(self.position_knob.numeric_value())
+        del blocker
         self._position_divisions = self.position_knob.numeric_value()
         self._update_position_label()
 
     def _update_position_label(self):
         displacement = self._position_divisions * self._time_per_division
+        self.position_time_label.setText(self._format_time(displacement, signed=True))
         self.position_label.setText(
             f"{self._position_divisions:+.2f} div\n"
             f"{self._format_time(displacement, signed=True)}"
@@ -197,3 +215,4 @@ class HorizontalControls(QGroupBox):
             value, unit = seconds, "s"
         text = f"{value:+.4g}" if signed else f"{value:.4g}"
         return f"{text} {unit}"
+

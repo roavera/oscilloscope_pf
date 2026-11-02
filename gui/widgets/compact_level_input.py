@@ -59,3 +59,10 @@ class CompactLevelInput(QDoubleSpinBox):
         super().focusOutEvent(event)
         self._editing = False
         self._refresh_text()
+
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.buttonSymbols() == QDoubleSpinBox.ButtonSymbols.NoButtons:
+            # Algunos estilos Qt reservan todo el ancho para los botones ocultos.
+            self.lineEdit().setGeometry(self.rect().adjusted(5, 3, -5, -3))

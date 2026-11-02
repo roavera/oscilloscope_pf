@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
 )
 
-from gui.widgets.drag_knob import DragKnob
+from gui.widgets.position_knob import LevelKnob
 from gui.widgets.compact_level_input import CompactLevelInput
 
 
@@ -72,23 +72,17 @@ class TriggerControls(QGroupBox):
         knob_column = QVBoxLayout()
         knob_column.setContentsMargins(0, 0, 0, 0)
         knob_column.setSpacing(3)
-        self.level_knob = DragKnob(
-            minimum=self._visible_min,
-            maximum=self._visible_max,
-            step=(self._visible_max - self._visible_min) / 2000,
-            initial=self._level, reset_value=0.0,
-            pixels_per_step=0.2, size=44,
-        )
-        self.level_knob.setToolTip(
-            "Arrastrá para ajustar el nivel de disparo.\n"
-            "Doble clic: restablecer a 0 V."
+        self.level_knob = LevelKnob(
+            minimum=self._visible_min, maximum=self._visible_max,
+            initial=self._level, accent_color="#e478c4", size=64,
         )
         knob_column.addWidget(self.level_knob, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.zero_button = QPushButton("0 V")
+        self.zero_button = QPushButton("0 V", self)
+        self.zero_button.hide()
         self.zero_button.setToolTip("Restablecer nivel de disparo a 0 V")
         self.zero_button.setFixedWidth(44)
         self.zero_button.setMinimumHeight(24)
-        knob_column.addWidget(self.zero_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        
         body.addLayout(knob_column)
 
         fields = QVBoxLayout()
@@ -104,7 +98,7 @@ class TriggerControls(QGroupBox):
         source_row.addWidget(self.source_combo, 1)
         fields.addLayout(source_row)
 
-        level_title = QLabel("Nivel de disparo (V)")
+        level_title = QLabel("Nivel (V)")
         level_title.setWordWrap(True)
         fields.addWidget(level_title)
         self.level_input = CompactLevelInput()
@@ -114,13 +108,14 @@ class TriggerControls(QGroupBox):
         self.level_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.level_input.setKeyboardTracking(False)
         self.level_input.setAccelerated(True)
-        self.level_input.setMinimumHeight(26)
+        self.level_input.setMinimumHeight(28)
+        self.level_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         # El rango numérico amplio no debe ensanchar el panel lateral.
         self.level_input.setMinimumWidth(0)
         self.level_input.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
-        self.level_input.setStyleSheet("color:#e478c4;font-weight:normal;padding-left:3px;padding-right:16px;")
+        self.level_input.setStyleSheet("color:#e478c4;font-weight:normal;padding-left:3px;padding-right:3px;")
         self.level_input.setToolTip(
             "Ingresá el nivel de tensión del disparo en voltios.\n"
             "Confirmá con Enter o saliendo del campo."
@@ -152,14 +147,14 @@ class TriggerControls(QGroupBox):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Auto", "Auto")
         self.mode_combo.addItem("Normal", "Normal")
-        self.mode_combo.addItem("Single (botón SINGLE)", "Single")
+        self.mode_combo.addItem("Single", "Single")
         self.mode_combo.model().item(2).setEnabled(False)
         self.mode_combo.setToolTip(
             "Auto: dispara si hay un cruce; sin cruces pasa a barrido libre.\n"
             "Normal: conserva la última captura hasta un disparo nuevo.\n"
             "Promediado y Envolvente siempre requieren disparos válidos."
         )
-        form.addRow("Modo:", self.mode_combo)
+        layout.insertWidget(0, self.mode_combo)
 
         self.slope_combo = QComboBox()
         self.slope_combo.addItem("Ascendente", "Rising")
@@ -286,5 +281,6 @@ class TriggerControls(QGroupBox):
             self.source_combo.setCurrentIndex(self.source_combo.findData(channel))
         finally:
             del blocker
+
 
 
