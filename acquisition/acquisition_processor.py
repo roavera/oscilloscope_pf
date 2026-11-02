@@ -22,7 +22,7 @@ Modos:
     roll
 
 NOTA:
-    Sampling, Average y Envelope están implementados.
+    Sampling, Peak Detect, Average y Envelope están implementados.
     Los demás modos se incorporarán progresivamente.
     FastAct y Roll requieren integración con la actualización de pantalla.
 ===============================================================================
@@ -34,6 +34,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from acquisition.modes.sampling import process_sampling
+from acquisition.modes.peak_detect import process_peak_detect
 from acquisition.modes.average import process_average
 from acquisition.modes.envelope import process_envelope, EnvelopeResult
 
@@ -97,6 +98,7 @@ class AcquisitionProcessor:
         # Algoritmos registrados.
         self._processors = {
             self.SAMPLING: process_sampling,
+            self.PEAK_DETECT: process_peak_detect,
             self.AVERAGE: process_average,
             self.ENVELOPE: process_envelope,
         }
@@ -131,6 +133,9 @@ class AcquisitionProcessor:
         if (not self._positive_integer(config.envelope_count)
                 or config.envelope_count not in self.ENVELOPE_OPTIONS):
             raise ValueError("envelope_count debe ser 4, 16, 32, 64, 128 o 256")
+
+        if config.peak_bucket_size not in (2, 4, 8, 16):
+            raise ValueError("peak_bucket_size debe ser 2, 4, 8 o 16")
 
         for name in (
             "peak_bucket_size",
@@ -216,7 +221,7 @@ class AcquisitionProcessor:
         El algoritmo debe aceptar:
             processor(samples, channel, config, state)
 
-        Sampling, Average y Envelope ya vienen registrados.
+        Sampling, Peak Detect, Average y Envelope ya vienen registrados.
 
         Los demás se registrarán al implementar
         los archivos de acquisition/modes/.
@@ -322,7 +327,7 @@ class AcquisitionProcessor:
                 "Las muestras deben formar un vector 1D"
             )
 
-        if data.size == 0:
+        if data.size == 0 and self.config.mode != self.PEAK_DETECT:
             if self.config.mode == self.ENVELOPE:
                 return EnvelopeResult(data.copy(), data.copy())
             return data.copy()
@@ -382,3 +387,4 @@ class AcquisitionProcessor:
         target = {self.AVERAGE: self.config.average_count,
                   self.ENVELOPE: self.config.envelope_count}.get(self.config.mode, 1)
         return int(state.get("count", 0)), target
+

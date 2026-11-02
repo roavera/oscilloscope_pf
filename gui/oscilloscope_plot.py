@@ -134,12 +134,10 @@ class OscilloscopePlot(QWidget):
         self.channel_scales = {1: self.volts_per_division, 2: self.volts_per_division}
         self.channel_positions = {1: -self.vertical_offset / self.volts_per_division, 2: 0.0}
         self.channel_visible = {1: True, 2: True}
-        self.channel_available = {1: True, 2: True}
         self.trigger_channel = 1
         self._raw_channels = None
         self._raw_envelope = None
         self.math_visible = False
-        self.math_input_available = True
         self.math_scale = 0.02
         self.math_position = 0.0
         self.math_expression = "CH1 + CH2"
@@ -443,7 +441,7 @@ class OscilloscopePlot(QWidget):
             y = view.mapViewToScene(QPointF(0.0, self.channel_positions[ch])).y()
             y = float(np.clip(y, scene_rect.top() + 12, scene_rect.bottom() - 12))
             marker.setPos(scene_rect.left() - 27, y)
-            marker.setVisible(self.channel_visible[ch] and self.channel_available[ch])
+            marker.setVisible(self.channel_visible[ch])
 
     # ================================================================
     # RANGOS VISIBLES
@@ -459,7 +457,7 @@ class OscilloscopePlot(QWidget):
     def _from_display(self, value, channel):
         return (np.asarray(value) - self.channel_positions[channel]) * self.channel_scales[channel]
 
-    def set_math_settings(self, *, scale=None, position=None, visible=None, expression=None, input_available=None):
+    def set_math_settings(self, *, scale=None, position=None, visible=None, expression=None):
         if scale is not None:
             if not np.isfinite(scale) or scale <= 0:
                 raise ValueError("Escala MATH inválida")
@@ -470,8 +468,6 @@ class OscilloscopePlot(QWidget):
             self.math_position = float(np.clip(position, -4, 4))
         if visible is not None:
             self.math_visible = bool(visible)
-        if input_available is not None:
-            self.math_input_available = bool(input_available)
         if expression is not None:
             self.math_expression = str(expression)
         self._refresh_math()
@@ -485,13 +481,13 @@ class OscilloscopePlot(QWidget):
         self._math_bounds = None
         self._refresh_math()
 
-    def set_math_envelope(self, minimum, maximum, sample_rate, trigger_sample=None):
+    def set_math_envelope(self, minimum, maximum, sample_rate, trigger_sample=None, *, sample_positions=None):
         minimum, maximum = np.asarray(minimum, dtype=np.float32), np.asarray(maximum, dtype=np.float32)
         if (minimum.ndim != 1 or maximum.shape != minimum.shape
                 or not np.isfinite(minimum).all() or not np.isfinite(maximum).all()
                 or np.any(minimum > maximum)):
             raise ValueError("Límites de MATH inválidos")
-        self._math_x = self._signal_time_axis(len(minimum), sample_rate, trigger_sample)
+        self._math_x = self._bounds_time_axis(len(minimum), sample_rate, trigger_sample, sample_positions)
         self._math_values = None
         self._math_bounds = minimum.copy(), maximum.copy()
         self._refresh_math()
@@ -506,8 +502,8 @@ class OscilloscopePlot(QWidget):
 
     def _refresh_math(self):
         convert = lambda values: values / self.math_scale + self.math_position
-        signal = self.math_input_available and self._math_values is not None and self._math_values.size > 0
-        envelope = self.math_input_available and self._math_bounds is not None and self._math_bounds[0].size > 0
+        signal = self._math_values is not None and self._math_values.size > 0
+        envelope = self._math_bounds is not None and self._math_bounds[0].size > 0
         if signal:
             self.math_curve.setData(self._math_x, convert(self._math_values))
         if envelope:
@@ -520,7 +516,7 @@ class OscilloscopePlot(QWidget):
         self.math_legend.setPos(self.horizontal_position, self.vertical_divisions/2 - 0.35)
         self.math_legend.setVisible(self.math_visible and (signal or envelope))
 
-    def set_channel_settings(self, channel, *, scale=None, position=None, visible=None, available=None):
+    def set_channel_settings(self, channel, *, scale=None, position=None, visible=None):
         if channel not in (1, 2):
             raise ValueError("Canal inválido")
         if scale is not None:
@@ -531,8 +527,6 @@ class OscilloscopePlot(QWidget):
             self.channel_positions[channel] = float(np.clip(position, -4, 4))
         if visible is not None:
             self.channel_visible[channel] = bool(visible)
-        if available is not None:
-            self.channel_available[channel] = bool(available)
         self._refresh_channel_curves()
         self.update_scales()
 
@@ -545,7 +539,7 @@ class OscilloscopePlot(QWidget):
     def _refresh_channel_curves(self):
         envelope = self._raw_envelope is not None
         for ch, curve in ((1, self.curve), (2, self.curve_ch2)):
-            visible = self.channel_visible[ch] and self.channel_available[ch]
+            visible = self.channel_visible[ch]
             curve.setVisible(visible and not envelope)
             if self._raw_channels is not None:
                 curve.setData(self._cursor_signal_x,
@@ -559,9 +553,8 @@ class OscilloscopePlot(QWidget):
             upper.setVisible(visible and envelope)
             self.envelope_fills[ch].setVisible(visible and envelope)
         text = "   ".join(f"CH{ch}: {self.channel_scales[ch]:g}/div" +
-                           (" (sin entrada)" if not self.channel_available[ch] else
-                            "" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
-        mode = " · Envolvente" if envelope else ""
+                           ("" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
+        mode = " · " + getattr(self, "_bounds_label", "Envolvente") if envelope else ""
         self.channel_legend.setText(text + f" · Trigger CH{self.trigger_channel} · USB sin calibrar" + mode)
         self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
         self._refresh_cursors()
@@ -706,7 +699,20 @@ class OscilloscopePlot(QWidget):
 
         return time_axis
 
-    def set_envelope(self, minimum, maximum, sample_rate, trigger_sample=None):
+    def _bounds_time_axis(self, count, sample_rate, trigger_sample, positions):
+        if positions is None:
+            return self._signal_time_axis(count, sample_rate, trigger_sample)
+        positions = np.asarray(positions, dtype=float)
+        if (positions.shape != (count,) or not np.isfinite(positions).all()
+                or np.any(positions < 0) or np.any(np.diff(positions) < 0)):
+            raise ValueError("Posiciones temporales inválidas")
+        rate = float(sample_rate)
+        if not np.isfinite(rate) or rate <= 0:
+            raise ValueError("Frecuencia de muestreo inválida")
+        origin = self._signal_time_axis(1, rate, trigger_sample)[0]
+        return origin + positions / rate
+
+    def set_envelope(self, minimum, maximum, sample_rate, trigger_sample=None, *, sample_positions=None):
         """Representa dos límites por canal, sin inventar una traza central."""
         minimum = np.asarray(minimum, dtype=np.float32)
         maximum = np.asarray(maximum, dtype=np.float32)
@@ -719,7 +725,8 @@ class OscilloscopePlot(QWidget):
         if not len(minimum):
             self.clear_signal()
             return
-        time_axis = self._signal_time_axis(len(minimum), sample_rate, trigger_sample)
+        time_axis = self._bounds_time_axis(len(minimum), sample_rate, trigger_sample, sample_positions)
+        self._bounds_label = "Peak Detect" if sample_positions is not None else "Envolvente"
         self._raw_channels = None
         self._raw_envelope = (minimum.copy(), maximum.copy())
         self._cursor_signal_x = time_axis
@@ -750,6 +757,7 @@ class OscilloscopePlot(QWidget):
         self._raw_channels = data.copy()
         self._cursor_signal_y = data[:, 0].copy()
         self._refresh_channel_curves()
+        self._refresh_cursors()
 
     def clear_signal(self):
         """Limpia las trazas conservando escalas y referencias."""
@@ -957,12 +965,8 @@ class OscilloscopePlot(QWidget):
                 x = self._cursor_signal_x
                 y = (self._raw_channels[:, channel-1] if self._raw_channels is not None
                      else np.array([], dtype=float))
-                if not self.channel_available[channel]:
-                    result = f'Track: CH{channel} sin datos de entrada'
-                    for point in self.cursor_points:
-                        point.setData([], [])
-                elif x.size < 2 or y.size != x.size:
-                    result = ('Track no disponible en Envolvente: hay dos límites por instante'
+                if x.size < 2 or y.size != x.size:
+                    result = (f'Track no disponible en {getattr(self, "_bounds_label", "Envolvente")}: hay dos límites por intervalo'
                               if self._raw_envelope is not None
                               else f'Track: esperando muestras de CH{channel}')
                     for point in self.cursor_points:

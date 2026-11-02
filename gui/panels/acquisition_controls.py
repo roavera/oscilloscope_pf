@@ -18,6 +18,7 @@ class AcquisitionControls(QGroupBox):
     interpolation_changed = Signal(str)
     average_count_changed = Signal(int)
     envelope_count_changed = Signal(int)
+    peak_bucket_size_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__("Adquisición", parent)
@@ -83,7 +84,7 @@ class AcquisitionControls(QGroupBox):
         )
         for label, value in modes:
             self.mode_combo.addItem(label, value)
-        for index in (1, 3):
+        for index in (3,):
             self.mode_combo.model().item(index).setEnabled(False)
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setToolTip("Procesamiento de las muestras adquiridas")
@@ -103,6 +104,14 @@ class AcquisitionControls(QGroupBox):
         self.interpolation_combo.setToolTip("Representación visual entre muestras")
 
         form.addRow("Modo:", self.mode_combo)
+        self.peak_bucket_combo = QComboBox()
+        for count in (2, 4, 8, 16):
+            self.peak_bucket_combo.addItem(str(count), count)
+        self.peak_bucket_combo.setCurrentIndex(1)
+        self.peak_bucket_combo.setToolTip(
+            "Mínimo y máximo por intervalo de una captura. No acumula capturas."
+        )
+        form.addRow("Muestras por intervalo:", self.peak_bucket_combo)
         self.average_count_combo = QComboBox()
         for count in (4, 16, 32, 64, 128, 256):
             self.average_count_combo.addItem(str(count), count)
@@ -135,6 +144,9 @@ class AcquisitionControls(QGroupBox):
         self.stop_button.clicked.connect(self.stop_clicked.emit)
         self.settings_button.clicked.connect(self.settings_dialog.show)
         self.mode_combo.currentIndexChanged.connect(self._emit_mode)
+        self.peak_bucket_combo.currentIndexChanged.connect(
+            lambda _: self.peak_bucket_size_changed.emit(int(self.peak_bucket_combo.currentData()))
+        )
         self.average_count_combo.currentIndexChanged.connect(self._emit_average_count)
         self.envelope_count_combo.currentIndexChanged.connect(self._emit_envelope_count)
         self._update_accumulation_controls()
@@ -146,7 +158,14 @@ class AcquisitionControls(QGroupBox):
         if value is not None:
             self.mode_changed.emit(str(value))
 
+    def set_peak_bucket_size(self, count):
+        index = self._index_for(self.peak_bucket_combo, count, "Intervalo Peak Detect")
+        blocker = QSignalBlocker(self.peak_bucket_combo)
+        self.peak_bucket_combo.setCurrentIndex(index)
+        del blocker
+
     def _update_accumulation_controls(self):
+        self.peak_bucket_combo.setEnabled(self.mode_combo.currentData() == "peak_detect")
         enabled = self.mode_combo.currentData() == "average"
         self.average_count_combo.setEnabled(enabled)
         envelope = self.mode_combo.currentData() == "envelope"
@@ -240,4 +259,5 @@ class AcquisitionControls(QGroupBox):
         if not enabled and self.interpolation_combo.currentIndex() == index:
             raise ValueError("No se puede deshabilitar la interpolación seleccionada.")
         self.interpolation_combo.model().item(index).setEnabled(bool(enabled))
+
 

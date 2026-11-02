@@ -9,6 +9,7 @@ STOP/SINGLE congelan la pantalla; disconnect_acquisition() detiene la fuente.
 Se muestran CH1 y CH2 sincronizados. Las muestras USB siguen normalizadas, no calibradas en voltios.
 """
 
+from copy import deepcopy
 from threading import Lock
 from time import monotonic
 
@@ -30,6 +31,7 @@ from acquisition.stereo_buffer import StereoBuffer
 from acquisition.acquisition_processor import AcquisitionProcessor
 from acquisition.capture_sequence import CaptureSequence
 from acquisition.modes.envelope import EnvelopeResult
+from acquisition.modes.peak_detect import PeakDetectResult
 from processing.math_processor import MathTraceProcessor
 from trigger.edge_trigger import Edge_Trigger
 
@@ -106,6 +108,8 @@ class OscilloscopeWidget(QWidget):
         self.trigger_found = False
         self.last_acquisition = None
         self.last_envelope = None
+        self._last_peak_capture = None
+        self._last_peak_config = None
         self._last_render_trigger_sample = None
 
         self._closed = False
@@ -358,6 +362,7 @@ class OscilloscopeWidget(QWidget):
         self.controls.acquisition_mode_changed.connect(
             self.set_acquisition_mode
         )
+        self.controls.acquisition_controls.peak_bucket_size_changed.connect(self.set_peak_bucket_size)
         self.controls.acquisition_controls.average_count_changed.connect(
             self.set_average_count
         )
@@ -444,6 +449,13 @@ class OscilloscopeWidget(QWidget):
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
+        # Una captura Peak congelada conserva sus datos originales incluso
+        # después de cambiar la base temporal (que reinicia la adquisición).
+        if (not self.running and isinstance(self.last_envelope, PeakDetectResult)
+                and self._last_peak_capture is not None):
+            frozen = MathTraceProcessor(self._last_peak_config)
+            frozen.math.configure(operation=operation, source_a=source_a, source_b=source_b)
+            result = frozen.process(self._last_peak_capture, self.sample_rate)
         self.controls.math_controls.set_configuration(self.math_processor.math.config)
         self.plot.set_math_settings(expression=self.math_processor.math.expression)
         self._math_error = None
@@ -466,8 +478,9 @@ class OscilloscopeWidget(QWidget):
             self.last_math = None
             self.plot.clear_math()
         elif isinstance(result, EnvelopeResult):
-            self.last_math = EnvelopeResult(result.minimum.copy(), result.maximum.copy())
-            self.plot.set_math_envelope(result.minimum, result.maximum, self.sample_rate, trigger_sample)
+            self.last_math = deepcopy(result)
+            self.plot.set_math_envelope(result.minimum, result.maximum, self.sample_rate, trigger_sample,
+                                        sample_positions=getattr(result, "sample_positions", None))
         else:
             self.last_math = np.asarray(result, dtype=np.float32).copy()
             self.plot.set_math_signal(self.last_math, self.sample_rate, trigger_sample)
@@ -482,13 +495,20 @@ class OscilloscopeWidget(QWidget):
         self._render_math(result, trigger_sample)
 
     def set_acquisition_mode(self, mode):
-        if mode not in ("sampling", "average", "envelope"):
+        if mode not in ("sampling", "peak_detect", "average", "envelope"):
             raise ValueError(f"Modo no disponible: {mode}")
         if mode != self.acquisition_processor.get_mode():
             self.acquisition_processor.set_mode(mode)
             self._reset_processing()
             self.trigger_found = False
         self.controls.set_acquisition_mode(mode)
+        self.update_controls_state()
+
+    def set_peak_bucket_size(self, count):
+        self.acquisition_processor.configure(peak_bucket_size=count)
+        self._reset_processing()
+        self.trigger_found = False
+        self.controls.acquisition_controls.set_peak_bucket_size(count)
         self.update_controls_state()
 
     def set_average_count(self, count):
@@ -720,6 +740,8 @@ class OscilloscopeWidget(QWidget):
         self.plot.clear_signal()
         self.last_math = None
         self._last_math_reference = None
+        self._last_peak_capture = None
+        self._last_peak_config = None
 
     def on_samples_received(self, data, generation=None):
         """Recibe pares estéreo sin descartar ni desalinear canales."""
@@ -889,6 +911,14 @@ class OscilloscopeWidget(QWidget):
         except ValueError as exc:
             self._pending_math_result = None
             self._math_error = str(exc)
+        if self.acquisition_processor.get_mode() == "peak_detect":
+            self._last_peak_capture = acquisition.copy()
+            self._last_peak_config = self.acquisition_processor.get_config()
+            return PeakDetectResult(
+                np.column_stack([result.minimum for result in results]),
+                np.column_stack([result.maximum for result in results]),
+                results[0].sample_positions.copy(), results[0].original_count,
+            )
         if self.acquisition_processor.get_mode() == "envelope":
             return EnvelopeResult(
                 np.column_stack([result.minimum for result in results]),
@@ -898,13 +928,14 @@ class OscilloscopeWidget(QWidget):
 
     def _render_processed(self, result, trigger_sample=None):
         if isinstance(result, EnvelopeResult):
-            self.last_envelope = EnvelopeResult(result.minimum.copy(), result.maximum.copy())
+            self.last_envelope = deepcopy(result)
             self.last_acquisition = None
             self._last_render_trigger_sample = trigger_sample
             self._last_display_buffer = None
             self.plot.set_envelope(
                 self.last_envelope.minimum, self.last_envelope.maximum,
                 self.sample_rate, trigger_sample=trigger_sample,
+                sample_positions=getattr(result, "sample_positions", None),
             )
         else:
             self._render_acquisition(result, trigger_sample)
@@ -941,6 +972,7 @@ class OscilloscopeWidget(QWidget):
             self.plot.set_envelope(
                 self.last_envelope.minimum, self.last_envelope.maximum,
                 self.sample_rate, trigger_sample=self._last_render_trigger_sample,
+                sample_positions=getattr(self.last_envelope, "sample_positions", None),
             )
             self._redraw_math()
             return
@@ -1042,6 +1074,8 @@ class OscilloscopeWidget(QWidget):
                 status += ": esperando disparo" if "esperando" not in status else ""
             label = "AVG" if mode == "average" else "ENV"
             status += f" · {label} {count}/{target}"
+        if mode == "peak_detect":
+            status += f" · PEAK {self.acquisition_processor.get_config().peak_bucket_size} muestras/intervalo"
         self.controls.show_state(self.running, status)
 
     # ================================================================
