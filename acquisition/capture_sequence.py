@@ -10,6 +10,8 @@ class TriggeredCapture:
     samples: np.ndarray
     trigger_sample: int
     trigger_id: int
+    raw_samples: np.ndarray | None = None
+    raw_trigger_sample: float | None = None
 
 
 class CaptureSequence:
@@ -64,5 +66,6 @@ class CaptureSequence:
             # Avanzar antes del yield: detener SINGLE no permite repetirlo.
             self._minimum_trigger = trigger_id + 1
             self._minimum_start = absolute_start + count + 1
-            yield TriggeredCapture(aligned, before, trigger_id)
+            yield TriggeredCapture(aligned, before, trigger_id, segment.copy(), before + fraction)
+
 

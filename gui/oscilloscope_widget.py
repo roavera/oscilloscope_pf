@@ -9,6 +9,8 @@ STOP/SINGLE congelan la pantalla; disconnect_acquisition() detiene la fuente.
 Se muestran CH1 y CH2 sincronizados. Las muestras USB siguen normalizadas, no calibradas en voltios.
 """
 
+from exporting.capture_export import CaptureArchive, raw_capture
+from gui.widgets.export_controls import ExportControls
 from copy import deepcopy
 from threading import Lock
 from time import monotonic
@@ -52,6 +54,7 @@ class OscilloscopeWidget(QWidget):
         # ADQUISICIÓN
         # ============================================================
 
+        self.capture_archive = CaptureArchive()
         self.sample_rate = 48000
         self.blocksize = 2048
         self.channels = 2
@@ -181,6 +184,8 @@ class OscilloscopeWidget(QWidget):
         self.plot.set_channel_settings(2, scale=self.ch2_volts_per_division)
         self.cursor_controls = self.controls.cursor_controls
         self.create_interface()
+        self.export_controls = ExportControls(self)
+        self.controls.layout().insertWidget(0, self.export_controls)
         self.connect_signals()
 
         # La interfaz se actualiza desde el hilo de Qt.
@@ -377,6 +382,7 @@ class OscilloscopeWidget(QWidget):
 
     def _reset_processing(self, *, use_buffered=False):
         """Reinicia acumulación e IDs sin borrar la captura visible."""
+        self.capture_archive.reset()
         self.acquisition_processor.reset()
         self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
         self.math_processor.reset()
@@ -490,6 +496,9 @@ class OscilloscopeWidget(QWidget):
         self._render_math(self.last_math, self._last_math_reference)
 
     def _recut_sampling_math(self, acquisition, trigger_sample=None):
+        self._archive_raw(acquisition, trigger_sample)
+        self.capture_archive.publish()
+        self.export_controls.refresh()
         self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
         result = self.math_processor.replace_sampling_capture(acquisition, self.sample_rate)
         self._render_math(result, trigger_sample)
@@ -634,6 +643,7 @@ class OscilloscopeWidget(QWidget):
             self._last_fractional_offset = 0.0
             self.plot.clear_signal()
             self.last_math = None
+            self.capture_archive.clear()
         self._reset_processing(use_buffered=True)
 
     def disconnect_acquisition(self):
@@ -717,6 +727,7 @@ class OscilloscopeWidget(QWidget):
 
     def reset_acquisition(self, sample_rate):
         """Descarta muestras previas y actualiza la base temporal."""
+        self.capture_archive.clear()
         rate = float(sample_rate)
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
@@ -887,6 +898,7 @@ class OscilloscopeWidget(QWidget):
                 self._pending_captures = None
                 break
             result = self._process_acquisition(capture.samples)
+            self._archive_raw(capture.raw_samples, capture.raw_trigger_sample)
             reference = capture.trigger_sample
             self.trigger_found = True
             count, target = self.acquisition_processor.get_progress()
@@ -898,6 +910,12 @@ class OscilloscopeWidget(QWidget):
         if result is not None:
             self._render_processed(result, reference)
         self.update_controls_state()
+
+    def _archive_raw(self, samples, trigger_sample):
+        config = self.acquisition_processor.get_config()
+        target = {"average": config.average_count, "envelope": config.envelope_count}.get(config.mode, 1)
+        capture = raw_capture(samples, self.sample_rate, trigger_sample, self.acquisition.source, config)
+        self.capture_archive.add(capture, target)
 
     def _process_acquisition(self, acquisition):
         results = [
@@ -940,6 +958,8 @@ class OscilloscopeWidget(QWidget):
         else:
             self._render_acquisition(result, trigger_sample)
         self._render_math(self._pending_math_result, trigger_sample)
+        self.capture_archive.publish()
+        self.export_controls.refresh()
 
     def _show_acquisition(self, acquisition, trigger_sample=None):
         """
@@ -950,6 +970,7 @@ class OscilloscopeWidget(QWidget):
         """
 
         processed = self._process_acquisition(acquisition)
+        self._archive_raw(acquisition, trigger_sample)
         self._render_processed(processed, trigger_sample)
 
     def _render_acquisition(self, samples, trigger_sample=None):
@@ -1005,6 +1026,8 @@ class OscilloscopeWidget(QWidget):
                 self.last_envelope = None
                 self.plot.clear_signal()
                 self.last_math = None
+                self.capture_archive.clear()
+                self.export_controls.refresh()
                 return
 
             samples_before = int(
@@ -1029,6 +1052,8 @@ class OscilloscopeWidget(QWidget):
                 self.last_envelope = None
                 self.plot.clear_signal()
                 self.last_math = None
+                self.capture_archive.clear()
+                self.export_controls.refresh()
                 return
 
             acquisition = data[-self.display_samples:].copy()
@@ -1040,6 +1065,7 @@ class OscilloscopeWidget(QWidget):
     # ================================================================
 
     def update_controls_state(self):
+        self.export_controls.refresh()
         self._update_math_status()
         if self._connection_state == "connecting":
             self.controls.show_state(False, "CONECTANDO...")
