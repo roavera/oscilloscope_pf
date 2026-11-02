@@ -121,14 +121,18 @@ class _USBBackend:
             raise RuntimeError("Esta fuente no admite configuración simulada")
         if channel not in (0, 1):
             raise ValueError("Canal inválido")
-        allowed = {"waveform", "frequency", "amplitude", "offset", "noise"}
+        allowed = {"waveform", "frequency", "amplitude", "offset", "noise", "enabled"}
         if set(settings) - allowed:
             raise ValueError("Parámetro de simulación desconocido")
         settings = dict(settings)
         if "waveform" in settings and settings["waveform"] not in (
                 "sine", "square", "triangle"):
             raise ValueError("Forma de onda inválida")
-        for key in allowed - {"waveform"}:
+        if "enabled" in settings:
+            if not isinstance(settings["enabled"], (bool, np.bool_)):
+                raise ValueError("enabled debe ser booleano")
+            settings["enabled"] = bool(settings["enabled"])
+        for key in allowed - {"waveform", "enabled"}:
             if key not in settings:
                 continue
             value = float(settings[key])
@@ -146,12 +150,16 @@ class _USBBackend:
             raise ValueError('Demasiados cambios pendientes; intentá nuevamente') from exc
 
     def _apply_settings(self):
+        changed = False
         for _ in range(64):
             try:
                 ch, settings = self._settings_queue.get_nowait()
             except Empty:
                 break
+            changed = True
             device = self._simulated_device
+            if "enabled" in settings:
+                device.input_enabled[ch] = settings["enabled"]
             prefix = "L" if ch == 0 else "R"
             # Estos ajustes sí recorren el protocolo de comandos del firmware.
             if "frequency" in settings:
@@ -167,6 +175,18 @@ class _USBBackend:
                 device.offset[ch] = settings["offset"]
             if "noise" in settings:
                 device.noise_channels[ch] = settings["noise"]
+
+        if changed:
+            # Descarta bytes y muestras anteriores a los ajustes aplicados.
+            self.reader.discard_pending()
+            if self.on_discontinuity is not None:
+                self.on_discontinuity()
+
+    @property
+    def active_channels(self):
+        if self._simulated_device is not None:
+            return tuple(bool(v) for v in self._simulated_device.input_enabled)
+        return tuple(ch in self.reader.channels for ch in ("L", "R"))
 
     def stop_stream(self):
         self._stop_event.set()
@@ -226,6 +246,7 @@ class AcquisitionManager:
         self._lock = threading.RLock()
         self._backend = None
         self._running = False
+        self._active_channels = (False, False)
         self._state = self.STOPPED
         self.on_state_changed = on_state_changed
         self.on_error = on_error
@@ -242,6 +263,11 @@ class AcquisitionManager:
     def _validate_rate(rate):
         if not math.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
+
+    @property
+    def active_channels(self):
+        with self._lock:
+            return self._active_channels
 
     @property
     def state(self):
@@ -270,6 +296,8 @@ class AcquisitionManager:
             changed = self._state != state
             self._state = state
             self._running = state == self.CONNECTED
+            if state in (self.STOPPED, self.ERROR):
+                self._active_channels = (False, False)
         if changed:
             self._notify(self.on_state_changed, state)
 
@@ -323,6 +351,7 @@ class AcquisitionManager:
             with self._lock:
                 target = self.buffer_ch1 if channel == "L" else self.buffer_ch2
                 target.add_samples(x)
+                self._active_channels = (channel == "L", channel == "R")
             callback(x)
             return
         if x.ndim != 2 or x.shape[1] not in (1, 2):
@@ -333,6 +362,9 @@ class AcquisitionManager:
         with self._lock:
             self.buffer_ch1.add_samples(x[:, 0])
             self.buffer_ch2.add_samples(x[:, 1])
+            self._active_channels = (self._backend.active_channels
+                                     if isinstance(self._backend, _USBBackend)
+                                     else (True, True))
         callback(x)
 
     def start(self, callback):
@@ -401,3 +433,4 @@ class AcquisitionManager:
                 raise
             self._backend = None
         self._set_state(self.STOPPED)
+

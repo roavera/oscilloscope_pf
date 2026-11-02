@@ -152,6 +152,13 @@ class TriggerControls(QGroupBox):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Auto", "Auto")
         self.mode_combo.addItem("Normal", "Normal")
+        self.mode_combo.addItem("Single (botón SINGLE)", "Single")
+        self.mode_combo.model().item(2).setEnabled(False)
+        self.mode_combo.setToolTip(
+            "Auto: dispara si hay un cruce; sin cruces pasa a barrido libre.\n"
+            "Normal: conserva la última captura hasta un disparo nuevo.\n"
+            "Promediado y Envolvente siempre requieren disparos válidos."
+        )
         form.addRow("Modo:", self.mode_combo)
 
         self.slope_combo = QComboBox()
@@ -268,9 +275,8 @@ class TriggerControls(QGroupBox):
         self._select(self.slope_combo, value, value)
 
     def set_mode(self, value):
-        # SINGLE sigue siendo una acción separada del selector.
-        if value != "Single":
-            self._select(self.mode_combo, value, value)
+        # SINGLE se arma con su botón, pero el selector refleja su estado.
+        self._select(self.mode_combo, value, value)
 
     def set_source(self, channel):
         if channel not in (1, 2):
@@ -280,4 +286,5 @@ class TriggerControls(QGroupBox):
             self.source_combo.setCurrentIndex(self.source_combo.findData(channel))
         finally:
             del blocker
+
 

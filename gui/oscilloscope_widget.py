@@ -10,6 +10,7 @@ Se muestran CH1 y CH2 sincronizados. Las muestras USB siguen normalizadas, no ca
 """
 
 from threading import Lock
+from time import monotonic
 
 import numpy as np
 
@@ -138,6 +139,12 @@ class OscilloscopeWidget(QWidget):
         self._math_error = None
         self.capture_sequence = CaptureSequence()
         self._last_sampling_trigger_id = -1
+        self._last_snapshot_end = 0
+        self._pending_captures = None
+        self.max_captures_per_tick = 32
+        self.auto_timeout = 0.15
+        self._last_trigger_time = monotonic()
+        self._auto_free_running = False
 
         self.acquisition = AcquisitionManager(
             source=AcquisitionManager.AUDIO,
@@ -375,6 +382,10 @@ class OscilloscopeWidget(QWidget):
                 minimum -= self.buffer.valid_samples
         self.capture_sequence.reset(minimum_trigger=minimum)
         self._last_sampling_trigger_id = minimum - 1
+        self._last_snapshot_end = minimum
+        self._pending_captures = None
+        self._last_trigger_time = monotonic()
+        self._auto_free_running = False
 
     def reset_accumulation(self, _checked=False):
         """Reinicia los historiales, manteniendo modo, N, conexión y RUN/STOP."""
@@ -734,20 +745,30 @@ class OscilloscopeWidget(QWidget):
         if self._closed or not self.running:
             return
 
+        # Una discontinuidad invalida también las capturas pendientes.
         with self._buffer_lock:
             discontinuity = self._pending_discontinuity
             self._pending_discontinuity = False
-            data = None
-            if self.running and self._new_data:
-                data = self.buffer.get_data()
-                first_sample = self.buffer.total_samples - len(data)
-                self._new_data = False
-
         if discontinuity:
             self._clear_trigger_history(preserve_display=True)
             self.update_controls_state()
-        if data is None:
+
+        # Distribuir un lote grande en varios ticks, sin repetir capturas.
+        if self._pending_captures is not None:
+            self._process_triggered_captures(None, None)
             return
+
+        with self._buffer_lock:
+            if not self._new_data:
+                return
+            total = self.buffer.total_samples
+            # Conservar el solapamiento necesario para pre/post-trigger y
+            # cruces entre bloques, sin copiar un segundo entero en cada tick.
+            count = max(0, total - self._last_snapshot_end) + self.display_samples + 2
+            data = self.buffer.get_data(count)
+            first_sample = total - len(data)
+            self._last_snapshot_end = total
+            self._new_data = False
 
         if len(data) < self.display_samples:
             return
@@ -783,6 +804,13 @@ class OscilloscopeWidget(QWidget):
                 self.update_controls_state()
                 return
 
+            # Auto espera brevemente un disparo nuevo antes del barrido libre.
+            # Una vez vencida la espera, cada bloque nuevo actualiza la pantalla.
+            if monotonic() - self._last_trigger_time < self.auto_timeout:
+                self._auto_free_running = False
+                self.update_controls_state()
+                return
+            self._auto_free_running = True
             # Auto sin disparo.
             self._last_display_buffer = data
             self._last_trigger_index = None
@@ -792,6 +820,8 @@ class OscilloscopeWidget(QWidget):
             self._show_acquisition(acquisition)
 
         else:
+            self._last_trigger_time = monotonic()
+            self._auto_free_running = False
             self._last_sampling_trigger_id = first_sample + trigger_index
             # Guarda el contexto del disparo para poder volver
             # a recortar esta adquisición sin buscar otro cruce.
@@ -821,13 +851,19 @@ class OscilloscopeWidget(QWidget):
         self.update_controls_state()
 
     def _process_triggered_captures(self, data, first_sample):
-        """Acumula ventanas nuevas; Auto no incorpora barridos libres."""
+        """Acumula un lote acotado por tick; Auto no mezcla barridos libres."""
+        if self._pending_captures is None:
+            self._pending_captures = self.capture_sequence.captures(
+                data, first_sample, self.display_samples, self.trigger, self.trigger_channel
+            )
         result = None
         reference = None
         self.trigger_found = False
-        for capture in self.capture_sequence.captures(
-            data, first_sample, self.display_samples, self.trigger, self.trigger_channel
-        ):
+        for _ in range(self.max_captures_per_tick):
+            capture = next(self._pending_captures, None)
+            if capture is None:
+                self._pending_captures = None
+                break
             result = self._process_acquisition(capture.samples)
             reference = capture.trigger_sample
             self.trigger_found = True
@@ -835,6 +871,7 @@ class OscilloscopeWidget(QWidget):
             if self.trigger_mode == "Single" and count >= target:
                 self.running = False
                 self.display_timer.stop()
+                self._pending_captures = None
                 break
         if result is not None:
             self._render_processed(result, reference)
@@ -984,19 +1021,17 @@ class OscilloscopeWidget(QWidget):
             return
 
         if not self.running:
-            status = "STOP"
-
+            status = "STOP · SINGLE completo" if self.single_mode else "STOP"
         elif self.trigger_mode == "Single":
             status = "SINGLE: esperando disparo"
-
-        elif (
-            self.trigger_mode == "Normal"
-            and not self.trigger_found
-        ):
-            status = "RUN: esperando disparo"
-
+        elif self.trigger_mode == "Normal":
+            status = "NORMAL: disparado" if self.trigger_found else "NORMAL: esperando disparo"
+        elif self.trigger_found:
+            status = "AUTO: disparado"
+        elif self._auto_free_running:
+            status = "AUTO: barrido libre"
         else:
-            status = "RUN"
+            status = "AUTO: esperando disparo"
 
         mode = self.acquisition_processor.get_mode()
         accumulating = mode in ("average", "envelope")
@@ -1249,6 +1284,7 @@ class OscilloscopeWidget(QWidget):
             return
 
         self.running = False
+        self.single_mode = False
         self.display_timer.stop()
         # No limpiar ni volver a recortar la captura mostrada.
         self.update_controls_state()
@@ -1303,5 +1339,6 @@ class OscilloscopeWidget(QWidget):
     def closeEvent(self, event):
         self.shutdown()
         event.accept()
+
 
 

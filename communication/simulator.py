@@ -140,6 +140,7 @@ class FakeBlackPill:
 
         self.offset = [0.0, 0.0]
         self.noise_channels = [self.noise, self.noise]
+        self.input_enabled = [True, True]
         self._rng = np.random.default_rng(seed)
 
         # ---------------------------------------------------------------------
@@ -819,6 +820,11 @@ class FakeBlackPill:
                 self.block,
             )
 
+            # La fase avanza, pero una entrada apagada no genera señal,
+            # offset ni ruido. La identidad de disponibilidad viaja por metadata.
+            if not self.input_enabled[ch]:
+                continue
+
             if (
                 self.on[ch]
                 and self.dac_on
@@ -1009,9 +1015,6 @@ class SimulatedTransport(Transport):
                 n - len(output)
             )
 
-            if self.adc_on:
-                output[:, ch] += self.offset[ch]
-
         return output
 
     # =========================================================================
@@ -1116,3 +1119,4 @@ class SimulatedTransport(Transport):
         self._host.clear()
 
         self.device.clear_tx()
+

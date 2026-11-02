@@ -241,6 +241,21 @@ class BlackPillReader:
                     self._reported_channel = self.channel
                     self._emit(('channel', self.channel, self._pos - len(x), now))
 
+    def discard_pending(self):
+        """Corte local tras aplicar ajustes del simulador, desde el hilo lector."""
+        if self.session is None:
+            raise CommunicationError("El lector no está abierto")
+        self.session.transport.reset_input()
+        self.session.parser.reset()
+        self._out.clear()
+        self._out_count = 0
+        self._lost_flag = True
+        self._cut_offset = 0
+        self._restart_offset = 0
+        self._last_audio_t = None
+        self._stream_requested_t = self._clock()
+        self._reset_rate()
+
     def set_channel(self, channel):
         """Pedir otro canal desde el hilo lector; la GUI debe usar su cola.
 
@@ -356,3 +371,4 @@ class BlackPillReader:
     def _emit(self, event):
         if self._ctrl is not None:
             self._ctrl.emit(event)
+

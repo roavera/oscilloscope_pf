@@ -1,6 +1,7 @@
-"""Panel para configurar la señal simulada de CH1."""
+"""Panel para configurar y habilitar la entrada simulada de un canal."""
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox, QHBoxLayout,
     QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QLabel,
     QVBoxLayout,
 )
@@ -17,7 +18,13 @@ class SimulatorControls(QGroupBox):
         for label, value in (("Senoidal", "sine"), ("Cuadrada", "square"),
                              ("Triangular", "triangle")):
             self.waveform.addItem(label, value)
-        form.addRow("Señal:", self.waveform)
+        source_row = QHBoxLayout()
+        self.channel_enabled = QCheckBox(f"{channel} activo")
+        self.channel_enabled.setChecked(True)
+        self.channel_enabled.setToolTip("Apaga o enciende la entrada de este canal en la simulación")
+        source_row.addWidget(self.channel_enabled)
+        source_row.addWidget(self.waveform, 1)
+        form.addRow("Entrada:", source_row)
 
         self.frequency = self._spin(1.0, 20000.0, 1000.0, 10.0, " Hz", 2)
         self.amplitude = self._spin(0.0, 1.0, 0.5, 0.05, "", 3)
@@ -31,6 +38,7 @@ class SimulatorControls(QGroupBox):
         info = QLabel("Amplitud, offset y ruido en unidades normalizadas (no V calibrados).")
         info.setWordWrap(True)
         layout.addWidget(info)
+        self.channel_enabled.toggled.connect(self._emit_settings)
         self.waveform.currentIndexChanged.connect(self._emit_settings)
         for spin in (self.frequency, self.amplitude, self.offset, self.noise):
             spin.valueChanged.connect(self._emit_settings)
@@ -46,14 +54,19 @@ class SimulatorControls(QGroupBox):
         return spin
 
     def _emit_settings(self, *_):
+        enabled = self.channel_enabled.isChecked()
+        for control in (self.waveform, self.frequency, self.amplitude, self.offset, self.noise):
+            control.setEnabled(enabled)
         self.settings_changed.emit(self.get_settings())
 
     def get_settings(self):
         return {
+            "enabled": self.channel_enabled.isChecked(),
             "waveform": self.waveform.currentData(),
             "frequency": self.frequency.value(),
             "amplitude": self.amplitude.value(),
             "offset": self.offset.value(),
             "noise": self.noise.value(),
         }
+
 
