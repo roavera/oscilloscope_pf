@@ -50,6 +50,7 @@ class _USBBackend:
                  transport=None, on_discontinuity=None, on_state=None, on_error=None):
         from communication.worker import BlackPillReader
         self._settings_queue = Queue(maxsize=64)
+        self._command_queue = Queue(maxsize=128)
         self._simulated_device = None
         if simulated and transport is None:
             from communication.simulator import SimulatedTransport
@@ -86,6 +87,7 @@ class _USBBackend:
                 return
             self.on_state("connected")
             while not self._stop_event.is_set():
+                self._apply_commands()
                 self._apply_settings()
                 samples, discontinuity, offset = self.reader.read_chunk()
                 if len(samples) == 0:
@@ -114,6 +116,29 @@ class _USBBackend:
                 self._stop_event.set()
                 if self.last_error is None:
                     self.on_state("stopped")
+
+    def send_command(self, command):
+        """Encola un Command validado; no toca la sesión desde el hilo GUI."""
+        from communication.commands import Command
+        if not isinstance(command, Command):
+            raise TypeError("Se esperaba un objeto communication.commands.Command")
+        if self._stop_event.is_set() or self._thread is None or not self._thread.is_alive():
+            raise RuntimeError("La adquisición USB no está activa")
+        try:
+            self._command_queue.put_nowait(command)
+        except Full as exc:
+            raise RuntimeError("Cola de comandos USB llena") from exc
+
+    def _apply_commands(self):
+        """Únicamente el hilo lector escribe en la sesión USB."""
+        for _ in range(32):
+            try:
+                command = self._command_queue.get_nowait()
+            except Empty:
+                break
+            # No permitir que esta interfaz detenga el stream de adquisición.
+            # El generador solo envía LFREQ, LWAVE, LAMP, LON, etc.
+            self.reader.session.send(command)
 
     def configure(self, channel=0, **settings):
         """Encola parámetros; solo el hilo lector modifica la placa simulada."""
@@ -410,6 +435,14 @@ class AcquisitionManager:
             raise
         if not isinstance(backend, _USBBackend):
             self._set_state(self.CONNECTED)
+
+    def send_command(self, command):
+        """Encola un comando al generador real o simulado conectado."""
+        if self.source not in (self.BLACKPILL_USB, self.SIMULATOR):
+            raise RuntimeError("Seleccioná una fuente Blackpill")
+        if self.state != self.CONNECTED or not isinstance(self._backend, _USBBackend):
+            raise RuntimeError("Esperá a que la Blackpill esté conectada")
+        self._backend.send_command(command)
 
     def configure_simulator(self, channel=0, **kwargs):
         if self.source != self.SIMULATOR or self._backend is None:

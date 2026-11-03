@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
+from .blackpill_generator_dialog import BlackpillGeneratorDialog
 from .oscilloscope_widget import OscilloscopeWidget
 from .theme.theme_manager import ThemeManager
 from .widgets.welcome_page import WelcomePage
@@ -157,6 +158,8 @@ class MainWindow(QMainWindow):
         self._create_appearance_menu()
         self._create_display_menu()
         self._create_cursors_menu()
+        self._generator_dialog = None
+        self._create_blackpill_menu()
 
         # También refleja RUN/STOP, que no cambia el estado del enlace.
         self.status_timer = QTimer(self)
@@ -202,6 +205,50 @@ class MainWindow(QMainWindow):
         cursor = self.oscilloscope.controls.cursor_controls
         cursor.mode.setCurrentText(
             "Off" if cursor.mode.currentText() != "Off" else "Manual"
+        )
+
+    def _create_blackpill_menu(self):
+        menu = self.menuBar().addMenu("Blackpill")
+        action = QAction("Generador de señales...", self)
+        action.triggered.connect(self._open_generator_dialog)
+        menu.addAction(action)
+
+    @Slot()
+    def _open_generator_dialog(self):
+        if self._generator_dialog is None:
+            self._generator_dialog = BlackpillGeneratorDialog(self)
+            self._generator_dialog.command_requested.connect(
+                self._send_blackpill_command
+            )
+        self._refresh_generator_status()
+        self._generator_dialog.show()
+        self._generator_dialog.raise_()
+        self._generator_dialog.activateWindow()
+
+    @Slot(object)
+    def _send_blackpill_command(self, command):
+        try:
+            self.oscilloscope.acquisition.send_command(command)
+        except Exception as exc:
+            self._show_error(str(exc))
+        else:
+            if self._generator_dialog is not None:
+                self._generator_dialog.status_label.setText(
+                    f"Comando encolado: {command.text} (sin confirmación del firmware)"
+                )
+
+    def _refresh_generator_status(self):
+        if self._generator_dialog is None:
+            return
+        manager = self.oscilloscope.acquisition
+        active = (
+            manager.source in (manager.SIMULATOR, manager.BLACKPILL_USB)
+            and manager.state == manager.CONNECTED
+        )
+        self._generator_dialog.set_connection_status(
+            active,
+            "Blackpill conectada: comandos habilitados" if active
+            else "Conectá una fuente Blackpill para habilitar los comandos",
         )
 
     def _create_cursors_menu(self):
@@ -529,6 +576,7 @@ class MainWindow(QMainWindow):
             port = manager.usb_port or "automático"
             text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"
         self.statusBar().showMessage(text)
+        self._refresh_generator_status()
 
     def closeEvent(self, event):
         # Cerrar primero permite cancelar el cierre si el hilo no termina.

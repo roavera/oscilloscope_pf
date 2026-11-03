@@ -1,12 +1,6 @@
-"""Coordina transporte, comandos y decodificador de la Blackpill.
-
-DeviceSession no crea hilos: el lector llama a poll() repetidamente.
-Usar desde el hilo de comunicación, no desde el hilo de la interfaz.
-Las operaciones se serializan para no modificar el parser mientras lee.
-El transporte debe tener timeout de lectura finito.
-
-stream_on y stream_channel indican lo SOLICITADO, no una confirmación
-del firmware. Las tramas recibidas conservan su propia identidad de canal.
+"""
+Coordina transporte, comandos y decodificador de la Blackpill.
+Las tramas recibidas conservan su propia identidad de canal.
 """
 from __future__ import annotations
 
@@ -16,7 +10,6 @@ from . import commands
 from .commands import Command
 from .errors import CommunicationError
 from .framing import FrameParser
-
 
 class DeviceSession:
     def __init__(self, transport, parser=None):
@@ -36,7 +29,6 @@ class DeviceSession:
 
     def open(self):
         """Abre el transporte y comienza una sesión local nueva.
-
         No inicia el stream ni asegura que la placa estuviera detenida.
         Si ya está abierto, no modifica el estado ni los bytes pendientes.
         """
@@ -50,7 +42,6 @@ class DeviceSession:
 
     def close(self, stop_stream=True):
         """Intenta detener el stream solicitado y cierra incluso si falla el envío.
-
         stop_stream=False solo cierra el transporte: no ordena parar la placa.
         Las estadísticas del parser se conservan hasta la próxima apertura.
         """
