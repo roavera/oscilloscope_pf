@@ -109,3 +109,40 @@ QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {
     height: 0;
 }
+
+/* OSCILLOSCOPE_TAB_CONTRAST_START */
+/* Pestañas legibles en el tema claro: activas, inactivas y deshabilitadas. */
+QTabWidget::pane {
+    background-color: #F9FBFE;
+    border: 1px solid #B7C8DC;
+    border-radius: 7px;
+    top: -1px;
+}
+QTabBar::tab {
+    background-color: #E1E9F3;
+    color: #2B405A;
+    border: 1px solid #B7C8DC;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    padding: 8px 17px;
+    margin-right: 3px;
+    min-width: 44px;
+}
+QTabBar::tab:selected {
+    background-color: #D2E5FF;
+    color: #154B87;
+    border-color: #427CC9;
+    font-weight: bold;
+}
+QTabBar::tab:!selected:hover {
+    background-color: #CFDDF0;
+    color: #183B64;
+    border-color: #6190CF;
+}
+QTabBar::tab:disabled {
+    background-color: #E8EDF4;
+    color: #8292A5;
+    border-color: #C8D2DF;
+}
+/* OSCILLOSCOPE_TAB_CONTRAST_END */

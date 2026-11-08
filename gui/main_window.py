@@ -26,6 +26,8 @@ from .blackpill_generator_dialog import BlackpillGeneratorDialog
 from .oscilloscope_widget import OscilloscopeWidget
 from .theme.theme_manager import ThemeManager
 from .widgets.welcome_page import WelcomePage
+from .theme.app_icon import create_oscilloscope_icon
+from .widgets.acquisition_source_dialog import AcquisitionSourceDialog
 
 class PortDialog(QDialog):
     """Selector actualizable. También admite escribir COM5 o /dev/ttyACM0."""
@@ -105,11 +107,13 @@ class PortDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(create_oscilloscope_icon())
         self.setWindowTitle("Osciloscopio de Audio")
         self.resize(1200, 700)
         self._closing = False
         self._last_error = None
         self._error_box = None
+        self._pending_physical_generator = None
         
         self.theme_manager = ThemeManager(self)
         self.theme_manager.apply_theme(self.theme_manager.current_theme)
@@ -142,6 +146,14 @@ class MainWindow(QMainWindow):
         self.home_action.setToolTip("Volver a la pantalla de bienvenida")
         self.home_action.triggered.connect(self._show_welcome)
         self.menuBar().addAction(self.home_action)
+        self.oscilloscope_logo = QLabel(self)
+        self.oscilloscope_logo.setPixmap(create_oscilloscope_icon().pixmap(24, 24))
+        self.oscilloscope_logo.setContentsMargins(5, 0, 5, 0)
+        self.oscilloscope_logo.setToolTip("Osciloscopio de Audio")
+        self.oscilloscope_logo.setStyleSheet("background: transparent; border: none;")
+        self.menuBar().setCornerWidget(
+            self.oscilloscope_logo, Qt.Corner.TopLeftCorner
+        )
 
         self._create_acquisition_menu()
         self.oscilloscope.acquisition_state_changed.connect(
@@ -151,7 +163,7 @@ class MainWindow(QMainWindow):
         
         self._create_appearance_menu()
         self._create_display_menu()
-        self._create_cursors_menu()
+        # Los cursores siguen disponibles en la pestaña CURSORES.
         self._generator_dialog = None
         self._create_blackpill_menu()
 
@@ -185,12 +197,94 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_oscilloscope(self):
+        manager = self.oscilloscope.acquisition
+        dialog = AcquisitionSourceDialog(
+            current_source=manager.source,
+            current_channels=manager.channels,
+            current_usb_port=manager.usb_port,
+            parent=self,
+        )
+        # Al reabrir desde el menú, mostrar la configuración ACTUAL de cada
+        # canal. Cancelar deja intacta la adquisición en curso.
+        for form, live_panel in (
+            (dialog.sim_ch1, self.oscilloscope.controls.simulator_controls),
+            (dialog.sim_ch2, self.oscilloscope.controls.simulator_controls_ch2),
+        ):
+            settings = live_panel.get_settings()
+            waveform_index = form.waveform.findData(settings["waveform"])
+            if waveform_index >= 0:
+                form.waveform.setCurrentIndex(waveform_index)
+            form.frequency.setValue(settings["frequency"])
+            form.amplitude.setValue(settings["amplitude"])
+            form.offset.setValue(settings["offset"])
+            form.noise.setValue(settings["noise"])
+            form.enabled.setChecked(settings["enabled"])
+            form._update_enabled(form.enabled.isChecked())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._apply_start_configuration(dialog.configuration())
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
         self._transition_to(self.scope_page)
+        self._update_status()
+
+    def _apply_start_configuration(self, config):
+        scope = self.oscilloscope
+        source = config["source"]
+        count = int(config["channels"])
+        if source not in AcquisitionManager.SAMPLE_RATES or count not in (1, 2):
+            raise ValueError("Configuración inicial inválida")
+
+        # No puede haber dos streams usando el mismo dispositivo o puerto.
+        scope.disconnect_acquisition()
+        scope.channels = count
+        scope.acquisition.channels = count
+        scope.acquisition.device = None  # sounddevice elige la entrada predeterminada
+        scope.acquisition.usb_simulated = False
+        self._pending_physical_generator = (
+            config["physical_generator"]
+            if source == AcquisitionManager.BLACKPILL_USB else None
+        )
+        if source == AcquisitionManager.BLACKPILL_USB:
+            scope.acquisition.usb_port = config["usb_port"]
+
+        # Preparar el panel ANTES de conectar: el callback de conexión
+        # aplica estos valores al backend simulado recién iniciado.
+        for panel, settings in zip(
+            (scope.controls.simulator_controls,
+             scope.controls.simulator_controls_ch2),
+            config["simulator"],
+        ):
+            index = panel.waveform.findData(settings["waveform"])
+            if index < 0:
+                raise ValueError("Forma de onda no disponible")
+            panel.waveform.setCurrentIndex(index)
+            panel.frequency.setValue(settings["frequency"])
+            panel.amplitude.setValue(settings["amplitude"])
+            panel.offset.setValue(settings["offset"])
+            panel.noise.setValue(settings["noise"])
+            panel.channel_enabled.setChecked(settings["enabled"])
+
+        # Un canal centrado; dos canales en 25 % y 75 % de la altura.
+        scope.controls.ch2_controls.visible_checkbox.setChecked(count == 2)
+        scope.controls.ch2_controls.setEnabled(count == 2)
+        if count == 1:
+            scope.set_trigger_channel(1)
+        scope.set_vertical_position(0.0 if count == 1 else 2.0)
+        scope.set_ch2_position(0.0 if count == 1 else -2.0)
+
+        # Incluye arranque y actualización de controles/display.
+        scope.change_acquisition_source(source)
 
     @Slot()
     def _show_welcome(self):
-        # Volver a Inicio no desconecta ni reinicia la adquisición.
-        # Se conserva la sesión existente hasta que se detenga explícitamente.
+        try:
+            self.oscilloscope.disconnect_acquisition()
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
         self._transition_to(self.welcome_page)
 
     @Slot()
@@ -202,7 +296,7 @@ class MainWindow(QMainWindow):
         )
 
     def _create_blackpill_menu(self):
-        menu = self.menuBar().addMenu("Blackpill")
+        menu = self.menuBar().addMenu("Generador Blackpill")
         action = QAction("Generador de señales...", self)
         action.triggered.connect(self._open_generator_dialog)
         menu.addAction(action)
@@ -253,7 +347,8 @@ class MainWindow(QMainWindow):
         menu.addAction(toggle_action)
 
     def _create_appearance_menu(self):
-        menu = self.menuBar().addMenu("Apariencia")
+        self.configuration_menu = self.menuBar().addMenu("Configuración")
+        menu = self.configuration_menu.addMenu("Apariencia")
 
         self.theme_group = QActionGroup(self)
         self.theme_group.setExclusive(True)
@@ -292,8 +387,18 @@ class MainWindow(QMainWindow):
 
 
     def _create_acquisition_menu(self):
-        menu = self.menuBar().addMenu("Adquisición")
-        sources_menu = menu.addMenu("Fuente")
+        # OSCILLOSCOPE_MENU_LAYOUT_V2
+        # Menú único: la configuración inicial y los controles de conexión.
+        menu = self.menuBar().addMenu("Fuente de entrada")
+        self.acquisition_setup_action = QAction("Seleccionar fuente y canales...", self)
+        self.acquisition_setup_action.setToolTip(
+            "Abrir la misma ventana de selección que aparece al iniciar"
+        )
+        self.acquisition_setup_action.triggered.connect(self._open_oscilloscope)
+        menu.addAction(self.acquisition_setup_action)
+        menu.addSeparator()
+        # Acceso avanzado opcional; no se pierden las acciones existentes.
+        sources_menu = menu.addMenu("Cambio rápido de fuente")
         self.source_group = QActionGroup(self)
         self.source_group.setExclusive(True)
         self.source_actions = {}
@@ -355,7 +460,7 @@ class MainWindow(QMainWindow):
     def _create_display_menu(self):
         """Selector independiente de apariencia del gráfico."""
 
-        menu = self.menuBar().addMenu("Pantalla")
+        menu = self.configuration_menu.addMenu("Pantalla")
 
         self.display_theme_group = QActionGroup(self)
         self.display_theme_group.setExclusive(True)
@@ -513,6 +618,33 @@ class MainWindow(QMainWindow):
         if state in ("connecting", "connected", "stopped"):
             self._last_error = None
         self._update_status()
+        if (state == "connected" and
+                self.oscilloscope.acquisition.source == AcquisitionManager.BLACKPILL_USB):
+            self._apply_pending_physical_generator()
+
+    def _apply_pending_physical_generator(self):
+        settings = self._pending_physical_generator
+        self._pending_physical_generator = None
+        if settings is None:
+            return
+        from communication import commands
+        count = self.oscilloscope.acquisition.channels
+        try:
+            for index, parameters in enumerate(settings[:count]):
+                name = "L" if index == 0 else "R"
+                for command in (
+                    commands.set_waveform(name, parameters["waveform"]),
+                    commands.set_frequency(name, parameters["frequency"]),
+                    commands.set_amplitude(name, parameters["amplitude_percent"]),
+                    commands.output_on(name) if parameters["enabled"]
+                    else commands.output_off(name),
+                ):
+                    self.oscilloscope.acquisition.send_command(command)
+            # Una sesión mono que configure el generador también apaga R.
+            if count == 1:
+                self.oscilloscope.acquisition.send_command(commands.output_off("R"))
+        except Exception as exc:
+            self._show_error("No se pudo configurar el generador físico: " + str(exc))
 
     @Slot(str)
     def _show_error(self, message):
@@ -565,10 +697,12 @@ class MainWindow(QMainWindow):
             f"Fs: {manager.sample_rate:,.2f} Hz"
         )
         if source == manager.SIMULATOR:
-            text += " | Transporte simulado · PCM24 · CH1 · amplitud sin calibrar"
+            channels = "CH1/CH2" if manager.channels == 2 else "CH1"
+            text += f" | Transporte simulado · PCM24 · {channels} · amplitud sin calibrar"
         if source == manager.BLACKPILL_USB:
             port = manager.usb_port or "automático"
-            text += f" | Puerto configurado: {port} | CH1 · amplitud sin calibrar"
+            channels = "CH1/CH2" if manager.channels == 2 else "CH1"
+            text += f" | Puerto configurado: {port} | {channels} · amplitud sin calibrar"
         self.statusBar().showMessage(text)
         self._refresh_generator_status()
 

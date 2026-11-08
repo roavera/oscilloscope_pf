@@ -53,7 +53,7 @@ class OscilloscopeWidget(
         self.capture_archive = CaptureArchive()
         self.sample_rate = 48000
         self.blocksize = 2048
-        self.channels = 2
+        self.channels = 1
         self.trigger_channel = 1
         self.ch2_volts_per_division = 0.02
         self.ch2_position_divisions = 0.0
@@ -102,7 +102,7 @@ class OscilloscopeWidget(
         # ESTADO
         # ============================================================
 
-        self.running = True
+        self.running = False
         self.single_mode = False
         self.trigger_found = False
         self.last_acquisition = None
@@ -222,7 +222,7 @@ class OscilloscopeWidget(
         self._reader_error.connect(
             self._on_reader_error, Qt.ConnectionType.QueuedConnection
         )
-        self.start_acquisition()
+        # Iniciar únicamente después de elegir fuente y canales.
 
 
     @Slot(int, str)

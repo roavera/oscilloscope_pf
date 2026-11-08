@@ -165,7 +165,8 @@ class AcquisitionMixin:
     def _apply_simulator_panel(self):
         for channel, panel in ((0, self.controls.simulator_controls),
                                (1, self.controls.simulator_controls_ch2)):
-            self._configure_simulator_channel(channel, panel.get_settings())
+            if channel < self.acquisition.channels:
+                self._configure_simulator_channel(channel, panel.get_settings())
 
 
     def _configure_simulator_channel(self, channel, settings):
@@ -237,10 +238,18 @@ class AcquisitionMixin:
     def on_samples_received(self, data, generation=None):
         """Recibe pares estéreo sin descartar ni desalinear canales."""
         samples = np.asarray(data, dtype=np.float32)
-        if samples.ndim != 2 or samples.shape[1] != 2:
-            raise ValueError("La fuente debe entregar pares sincronizados (N, 2)")
+        if samples.ndim == 1:
+            samples = samples[:, None]
+        if samples.ndim != 2 or samples.shape[1] not in (1, 2):
+            raise ValueError("La fuente debe entregar (N,), (N, 1) o (N, 2)")
         if samples.size == 0:
             return
+        if samples.shape[1] == 1:
+            # El procesador interno trabaja con pares alineados; CH2
+            # permanece vacío y oculto, nunca se copia CH1.
+            stereo = np.zeros((len(samples), 2), dtype=np.float32)
+            stereo[:, 0] = samples[:, 0]
+            samples = stereo
         with self._buffer_lock:
             if self._closed or (generation is not None and
                                 generation != self._source_generation):

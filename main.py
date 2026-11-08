@@ -6,6 +6,7 @@ from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QToolButton
 
 from gui.main_window import MainWindow
+from gui.theme.app_icon import create_oscilloscope_icon
 
 
 class FullScreenControls(QObject):
@@ -61,6 +62,7 @@ class FullScreenControls(QObject):
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(create_oscilloscope_icon())
     window = MainWindow()
     window.fullscreen_controls = FullScreenControls(window)
     window.showFullScreen()
