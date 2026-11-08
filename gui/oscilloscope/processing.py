@@ -23,6 +23,7 @@ class ProcessingMixin:
             if use_buffered:
                 minimum -= self.buffer.valid_samples
         self.capture_sequence.reset(minimum_trigger=minimum)
+        self.trigger_holdoff.reset()
         self._last_sampling_trigger_id = minimum - 1
         self._last_snapshot_end = minimum
         self._pending_captures = None
@@ -196,9 +197,16 @@ class ProcessingMixin:
         # Detector compartido por Sampling, Peak Detect y High Resolution.
         # Average/Envelope usan el mismo trigger a través de CaptureSequence.
         # La captura y sus datos originales NO se filtran aquí.
+        # Seleccionar el ultimo cruce que ya haya salido del Holdoff.
+        # Se compara sobre indices ABSOLUTOS de muestra, no tiempo de GUI.
+        first_allowed = self.trigger_holdoff.earliest_sample(self.sample_rate)
+        minimum_absolute = float(self._last_sampling_trigger_id + 1)
+        if first_allowed is not None:
+            minimum_absolute = max(minimum_absolute, first_allowed)
         trigger_index = self.trigger.find(
             data[:, self.trigger_channel - 1],
             self.display_samples,
+            minimum_index=minimum_absolute - first_sample,
         )
 
         acquisition = None
@@ -221,6 +229,13 @@ class ProcessingMixin:
         self.trigger_found = acquisition is not None
 
         if not self.trigger_found:
+            # Durante el Holdoff no producir barridos libres en Auto.
+            # Se usa el reloj de muestras, NO el reloj de la GUI.
+            holdoff_end = self.trigger_holdoff.earliest_sample(self.sample_rate)
+            if holdoff_end is not None and total < holdoff_end:
+                self._auto_free_running = False
+                self.update_controls_state()
+                return
             # Normal y Single conservan la última traza
             # mientras esperan un disparo válido.
             if self.trigger_mode in ("Normal", "Single"):
@@ -246,6 +261,9 @@ class ProcessingMixin:
             )
 
         else:
+            self.trigger_holdoff.accept(
+                float(first_sample + trigger_index) + self.trigger.fractional_offset
+            )
             self._last_trigger_time = monotonic()
             self._auto_free_running = False
             self._last_sampling_trigger_id = first_sample + trigger_index
@@ -285,6 +303,7 @@ class ProcessingMixin:
             self._pending_captures = self.capture_sequence.captures(
                 data, first_sample, self.display_samples, self.trigger, self.trigger_channel,
                 raw_data=raw_data,
+                holdoff=self.trigger_holdoff, sample_rate=self.sample_rate,
             )
         result = None
         reference = None

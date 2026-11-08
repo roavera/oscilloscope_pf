@@ -163,7 +163,7 @@ class Edge_Trigger:
                 armed = False
         return events
 
-    def find(self, data, display_samples):
+    def find(self, data, display_samples, *, minimum_index=None):
         """Elige el evento completo más reciente dentro de la ventana."""
         data = np.asarray(data)
         n = len(data)
@@ -175,7 +175,11 @@ class Edge_Trigger:
         low = before
         # Se necesita una muestra a la derecha del cruce para la interpolación.
         high = min(n - after, n - 2)
-        choices = [e for e in self.crossings(data) if low <= e.index <= high]
+        choices = [
+            e for e in self.crossings(data)
+            if low <= e.index <= high and
+            (minimum_index is None or e.index + e.fraction >= minimum_index)
+        ]
         if not choices:
             self.fractional_offset = 0.0
             return None

@@ -28,7 +28,8 @@ class CaptureSequence:
         self._minimum_trigger = int(minimum_trigger)
         self._minimum_start = 0
 
-    def captures(self, data, first_sample, display_samples, trigger, channel, *, raw_data=None):
+    def captures(self, data, first_sample, display_samples, trigger, channel,
+                 *, raw_data=None, holdoff=None, sample_rate=None):
         data = np.asarray(data, dtype=np.float32)
         # Calibrated data is used for trigger and processing. These are
         # the exact native PCM24-decoded samples retained for CSV export.
@@ -39,6 +40,8 @@ class CaptureSequence:
             raise ValueError("Se requieren pares sincronizados (N, 2)")
         if channel not in (1, 2):
             raise ValueError("La fuente debe ser CH1 o CH2")
+        if holdoff is not None and sample_rate is None:
+            raise ValueError("El Holdoff requiere frecuencia de muestreo")
         count = int(display_samples)
         if count < 2 or len(data) < count + 1:
             return
@@ -51,6 +54,9 @@ class CaptureSequence:
         for event in events:
             index = event.index
             if not low <= index <= high:
+                continue
+            absolute_event = float(first_sample + index) + event.fraction
+            if holdoff is not None and not holdoff.allows(absolute_event, sample_rate):
                 continue
             start = index - before
             absolute_start = int(first_sample + start)
@@ -65,5 +71,7 @@ class CaptureSequence:
             trigger_id = int(first_sample + index)
             self._minimum_trigger = trigger_id + 1
             self._minimum_start = absolute_start + count + 1
+            if holdoff is not None:
+                holdoff.accept(absolute_event)
             yield TriggeredCapture(aligned, before, trigger_id,
                                    raw_data[start:start + count + 1].copy(), before + fraction)

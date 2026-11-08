@@ -18,6 +18,8 @@ class TriggerControls(QGroupBox):
     slope_changed = Signal(str)
     mode_changed = Signal(str)
     single_clicked = Signal()
+    auto_level_clicked = Signal()
+    holdoff_changed = Signal(float)  # segundos
 
     def __init__(self, parent=None):
         super().__init__("Trigger", parent)
@@ -63,6 +65,19 @@ class TriggerControls(QGroupBox):
         actions.setSpacing(4)
         actions.addWidget(self.settings_button, 1)
         actions.addWidget(self.single_button, 1)
+        self.auto_level_button = QPushButton("AUTO LEVEL")
+        self.auto_level_button.setMinimumHeight(28)
+        self.auto_level_button.setToolTip(
+            "Calcula un umbral de disparo desde el canal seleccionado. "
+            "No modifica las muestras ni las escalas."
+        )
+        self.auto_level_button.setStyleSheet("""
+            QPushButton {background:#205c68;color:#f2fcff;border:1px solid #4e8b9a;
+                border-radius:5px;font-weight:bold;padding:4px 6px;}
+            QPushButton:hover:enabled {background:#28788a;}
+            QPushButton:disabled {background:#374650;color:#9caeb7;}
+        """)
+        actions.addWidget(self.auto_level_button, 1)
         layout.addLayout(actions)
 
         # Perilla a la izquierda; fuente y entrada numérica a la derecha.
@@ -156,13 +171,28 @@ class TriggerControls(QGroupBox):
         )
         layout.insertWidget(0, self.mode_combo)
 
+        self.holdoff_spin = QDoubleSpinBox()
+        self.holdoff_spin.setRange(0.0, 10000.0)  # ms
+        self.holdoff_spin.setDecimals(3)
+        self.holdoff_spin.setSingleStep(1.0)
+        self.holdoff_spin.setSuffix(" ms")
+        self.holdoff_spin.setKeyboardTracking(False)
+        self.holdoff_spin.setToolTip(
+            "Tiempo minimo entre disparos aceptados. 0 ms = desactivado. "
+            "No depende del tiempo de actualizacion de pantalla."
+        )
+        form.addRow("Holdoff:", self.holdoff_spin)
+
         self.slope_combo = QComboBox()
         self.slope_combo.addItem("Ascendente", "Rising")
         self.slope_combo.addItem("Descendente", "Falling")
         form.addRow("Flanco:", self.slope_combo)
         dialog_layout.addLayout(form)
 
-        note = QLabel("Tipo disponible: disparo por flanco.")
+        note = QLabel(
+            "Tipo disponible: disparo por flanco. "
+            "Holdoff evita aceptar nuevos eventos durante el intervalo configurado."
+        )
         note.setWordWrap(True)
         dialog_layout.addWidget(note)
         close_button = QPushButton("Cerrar")
@@ -176,8 +206,10 @@ class TriggerControls(QGroupBox):
         self.level_input.valueChanged.connect(self._emit_level_change)
         self.zero_button.clicked.connect(self._zero_level)
         self.slope_combo.currentIndexChanged.connect(self._emit_slope_change)
+        self.holdoff_spin.valueChanged.connect(self._emit_holdoff_change)
         self.mode_combo.currentIndexChanged.connect(self._emit_mode_change)
         self.single_button.clicked.connect(self.single_clicked.emit)
+        self.auto_level_button.clicked.connect(self.auto_level_clicked.emit)
 
     def _show_settings(self, _checked=False):
         self.settings_dialog.show()
@@ -199,6 +231,16 @@ class TriggerControls(QGroupBox):
         # Actualizar los dos controles antes de notificar al controlador.
         self.set_level(value)
         self.level_changed.emit(value)
+
+    def _emit_holdoff_change(self, milliseconds):
+        self.holdoff_changed.emit(float(milliseconds) / 1000.0)
+
+    def set_holdoff(self, seconds):
+        blocker = QSignalBlocker(self.holdoff_spin)
+        try:
+            self.holdoff_spin.setValue(float(seconds) * 1000.0)
+        finally:
+            del blocker
 
     def _emit_slope_change(self, _index):
         value = self.slope_combo.currentData()

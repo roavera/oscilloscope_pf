@@ -1,6 +1,7 @@
 """Escalas, posiciones, fuente y configuración de disparo de ambos canales."""
 
 import numpy as np
+from trigger.auto_level import estimate_auto_level
 
 
 class ControlsMixin:
@@ -11,6 +12,7 @@ class ControlsMixin:
         self.set_trigger_level(0.0)
         self.set_trigger_slope("Rising")
         self.set_trigger_mode("Auto")
+        self.set_trigger_holdoff(0.0)
 
 
     def reset_horizontal_controls(self, _checked=False):
@@ -123,6 +125,56 @@ class ControlsMixin:
         self.plot.set_channel_settings(2, position=self.ch2_position_divisions)
         self.update_trigger_range()
 
+
+    def set_trigger_holdoff(self, seconds):
+        """Tiempo de espera entre disparos en segundos (0 = desactivado)."""
+        seconds = float(seconds)
+        if seconds != self.trigger_holdoff.seconds:
+            self.trigger_holdoff.set_seconds(seconds)
+            self._reset_processing()
+            self.trigger_found = False
+        self.controls.trigger_controls.set_holdoff(seconds)
+        self.update_controls_state()
+
+    def auto_trigger_level(self):
+        """Calcula Auto Level al hacer clic; no cambia las muestras ni Volt/div."""
+        from PySide6.QtWidgets import QMessageBox
+
+        if self._closed:
+            return
+        channel = int(self.trigger_channel)
+        if channel not in (1, 2) or channel > self.acquisition.channels:
+            QMessageBox.information(self, "Auto Level", "El canal elegido no está adquirido.")
+            return
+
+        # En STOP usar preferentemente la captura congelada del usuario.
+        frozen = getattr(self, "last_acquisition", None)
+        if not self.running and frozen is not None:
+            samples = np.asarray(frozen, dtype=np.float32)
+        else:
+            # El buffer guarda PCM24 normalizado; aplicar la MISMA calibración
+            # que utilizan el trigger y los modos de adquisición.
+            with self._buffer_lock:
+                recent = self.buffer.get_data(min(
+                    self.buffer.valid_samples,
+                    max(32, int(round(self.sample_rate)))
+                ))
+            samples = (self.voltage_calibration.apply(recent, self.acquisition.source)
+                       if len(recent) else np.empty((0, 2), dtype=np.float32))
+
+        if samples.ndim != 2 or samples.shape[1] != 2:
+            QMessageBox.information(self, "Auto Level", "La captura no tiene ambos canales alineados.")
+            return
+        level = estimate_auto_level(samples[:, channel - 1])
+        if level is None:
+            QMessageBox.information(
+                self, "Auto Level",
+                f"CH{channel}: no hay suficientes muestras o amplitud de señal "
+                "para establecer un nivel automático."
+            )
+            return
+        # Actualiza perilla, campo numérico, marcador y detector existente.
+        self.set_trigger_level(level)
 
     def set_trigger_channel(self, channel):
         if channel not in (1, 2) or channel == self.trigger_channel:

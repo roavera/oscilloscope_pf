@@ -22,6 +22,7 @@ class FastActMixin:
             self._pending_captures = self.capture_sequence.captures(
                 data, first_sample, self.display_samples, self.trigger,
                 self.trigger_channel, raw_data=raw_data,
+                holdoff=self.trigger_holdoff, sample_rate=self.sample_rate,
             )
 
         now = monotonic()

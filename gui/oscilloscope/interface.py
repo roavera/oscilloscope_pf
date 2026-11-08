@@ -94,6 +94,7 @@ class InterfaceMixin:
         for ch, panel in ((1, self.controls.ch1_controls), (2, self.controls.ch2_controls)):
             panel.visibility_changed.connect(lambda visible, c=ch: self.plot.set_channel_settings(c, visible=visible))
         self.controls.trigger_controls.source_changed.connect(self.set_trigger_channel)
+        self.controls.trigger_controls.auto_level_clicked.connect(self.auto_trigger_level)
         self.controls.simulator_controls_ch2.settings_changed.connect(self._on_simulator_ch2_settings_changed)
         # Control horizontal.
         self.controls.time_per_division_changed.connect(
@@ -132,6 +133,9 @@ class InterfaceMixin:
 
         self.controls.trigger_mode_changed.connect(
             self.set_trigger_mode
+        )
+        self.controls.trigger_controls.holdoff_changed.connect(
+            self.set_trigger_holdoff
         )
 
         # Trigger desde el gráfico.

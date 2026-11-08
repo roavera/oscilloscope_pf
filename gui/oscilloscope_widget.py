@@ -14,6 +14,7 @@ from acquisition.capture_sequence import CaptureSequence
 from exporting.capture_export import CaptureArchive
 from processing.math_processor import MathTraceProcessor
 from trigger.edge_trigger import Edge_Trigger
+from trigger.holdoff import TriggerHoldoff
 from gui.controls import OscilloscopeControls
 from gui.oscilloscope_plot import OscilloscopePlot
 from gui.widgets.export_controls import ExportControls
@@ -147,6 +148,7 @@ class OscilloscopeWidget(
         self._last_math_reference = None
         self._math_error = None
         self.capture_sequence = CaptureSequence()
+        self.trigger_holdoff = TriggerHoldoff()
         self._last_sampling_trigger_id = -1
         self._last_snapshot_end = 0
         self._pending_captures = None
