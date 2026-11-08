@@ -36,6 +36,11 @@ class MathTraceMixin:
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
+        if (self.acquisition_processor.get_mode() == "fastact" and
+                self.last_acquisition is not None):
+            result = self.math_processor.math.evaluate(
+                self.last_acquisition, self.sample_rate
+            ).values
         # Una captura Peak congelada conserva sus datos originales incluso
         # después de cambiar la base temporal (que reinicia la adquisición).
         if (not self.running and isinstance(self.last_envelope, PeakDetectResult)

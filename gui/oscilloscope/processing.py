@@ -30,6 +30,8 @@ class ProcessingMixin:
         self._auto_free_running = False
         if self.acquisition_processor.get_mode() == "roll":
             self._reset_roll_history()
+        elif self.acquisition_processor.get_mode() == "fastact":
+            self._reset_fastact()
 
 
     def reset_accumulation(self, _checked=False):
@@ -63,7 +65,7 @@ class ProcessingMixin:
 
 
     def set_acquisition_mode(self, mode):
-        if mode not in ("sampling", "peak_detect", "average", "envelope", "high_resolution", "roll"):
+        if mode not in ("sampling", "peak_detect", "average", "envelope", "high_resolution", "roll", "fastact"):
             raise ValueError(f"Modo no disponible: {mode}")
         previous = self.acquisition_processor.get_mode()
         if mode != previous:
@@ -79,7 +81,14 @@ class ProcessingMixin:
                 self.last_math = None
                 self.plot.clear_signal()
                 self.capture_archive.clear()
+        if previous == "fastact" and mode != "fastact":
+            self._fastact_density = None
+            self.plot.clear_fastact()
+            self.last_acquisition = None
+            self.last_math = None
+            self.plot.clear_signal()
         self.plot.set_roll_mode(mode == "roll")
+        self.plot.set_fastact_mode(mode == "fastact")
         if mode == "roll" and previous != "roll" and self.time_per_division < 0.1:
             self.set_time_per_division(0.5)  # 6 segundos por pantalla
         elif previous == "roll" and mode != "roll":
@@ -141,7 +150,10 @@ class ProcessingMixin:
 
         # Distribuir un lote grande en varios ticks, sin repetir capturas.
         if self._pending_captures is not None:
-            self._process_triggered_captures(None, None)
+            if self.acquisition_processor.get_mode() == "fastact":
+                self._process_fastact_captures(None, None)
+            else:
+                self._process_triggered_captures(None, None)
             return
 
         with self._buffer_lock:
@@ -171,6 +183,10 @@ class ProcessingMixin:
             return
 
         if len(data) < self.display_samples:
+            return
+
+        if mode == "fastact":
+            self._process_fastact_captures(data, first_sample, raw_data=raw_data)
             return
 
         if self.acquisition_processor.get_mode() in ("average", "envelope"):

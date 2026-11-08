@@ -149,6 +149,7 @@ class OscilloscopePlot(QWidget):
         self.calibration_label = "Sin calibrar"
         self.voltage_units = False
         self.create_interface()
+        self._init_fastact_overlay()
             
     def set_grid_enabled(self, enabled: bool):
         """Activa o desactiva la grilla del display."""
@@ -542,6 +543,33 @@ class OscilloscopePlot(QWidget):
         self.trigger_channel = channel
         self.update_scales()
 
+    def _init_fastact_overlay(self):
+        """Imagen de persistencia, debajo de las curvas, sobre la grilla."""
+        self.fastact_active = False
+        self.fastact_image = pg.ImageItem(axisOrder="row-major")
+        self.fastact_image.setZValue(4.5)  # Curvas CH1/CH2: 5; MATH: 7.
+        self.fastact_image.setOpacity(0.85)
+        self.plot_widget.addItem(self.fastact_image, ignoreBounds=True)
+        self.fastact_image.hide()
+
+    def set_fastact_mode(self, active):
+        self.fastact_active = bool(active)
+        self.fastact_image.setVisible(self.fastact_active and self.fastact_image.image is not None)
+        self._refresh_channel_curves()
+
+    def clear_fastact(self):
+        self.fastact_image.setImage(np.zeros((8, 8, 4), dtype=np.uint8), autoLevels=False)
+        self.fastact_image.hide()
+
+    def set_fastact_image(self, rgba):
+        rgba = np.asarray(rgba, dtype=np.uint8)
+        if rgba.ndim != 3 or rgba.shape[2] != 4:
+            raise ValueError("La persistencia FastAct debe ser RGBA")
+        self.fastact_image.setImage(rgba, autoLevels=False)
+        span = self.time_per_division * self.horizontal_divisions
+        self.fastact_image.setRect(QRectF(self.horizontal_position, -4, span, 8))
+        self.fastact_image.setVisible(self.fastact_active)
+
     def set_roll_mode(self, active):
         """Oculta los marcadores de disparo en Roll."""
         self.roll_active = bool(active)
@@ -576,8 +604,9 @@ class OscilloscopePlot(QWidget):
                            ("" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
         mode = " · " + getattr(self, "_bounds_label", "Envolvente") if envelope else ""
         self.channel_legend.setText(
-            text + (" · ROLL (sin trigger)" if self.roll_active else
-                    f" · Trigger CH{self.trigger_channel}") +
+            text + (" · FASTACT (persistencia)" if getattr(self, "fastact_active", False) else
+                    (" · ROLL (sin trigger)" if self.roll_active else
+                     f" · Trigger CH{self.trigger_channel}")) +
             f" · {self.calibration_label}" + mode
         )
         self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
@@ -593,6 +622,8 @@ class OscilloscopePlot(QWidget):
             self.horizontal_position + total_time,
             padding=0,
         )
+        if hasattr(self, "fastact_image"):
+            self.fastact_image.setRect(QRectF(self.horizontal_position, -4, total_time, 8))
 
         y_min, y_max = self.vertical_range()
 

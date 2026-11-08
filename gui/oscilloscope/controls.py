@@ -41,6 +41,11 @@ class ControlsMixin:
 
         if value != self.time_per_division:
             self._reset_processing()
+            if self.acquisition_processor.get_mode() == "fastact":
+                # Cambia el ancho de captura; la traza vieja deja de ser válida.
+                self.last_acquisition = None
+                self.last_math = None
+                self.plot.clear_signal()
         self.time_per_division = value
 
         self.display_samples = max(
@@ -101,6 +106,8 @@ class ControlsMixin:
         value = float(value)
         if not np.isfinite(value) or value <= 0:
             return
+        if self.ch2_volts_per_division != value:
+            self._clear_fastact_for_vertical_change()
         self.ch2_volts_per_division = value
         self.controls.ch2_controls.set_volts_per_division(value)
         self.plot.set_channel_settings(2, scale=value)
@@ -110,6 +117,7 @@ class ControlsMixin:
     def set_ch2_position(self, divisions):
         if not np.isfinite(divisions):
             return
+        self._clear_fastact_for_vertical_change()
         self.ch2_position_divisions = float(np.clip(round(divisions, 2), -4, 4))
         self.controls.ch2_controls.set_position(self.ch2_position_divisions)
         self.plot.set_channel_settings(2, position=self.ch2_position_divisions)
@@ -135,6 +143,8 @@ class ControlsMixin:
         if not np.isfinite(value) or value <= 0:
             return
 
+        if self.volts_per_division != value:
+            self._clear_fastact_for_vertical_change()
         self.volts_per_division = value
 
         self.plot.set_volts_per_division(value)
@@ -156,6 +166,8 @@ class ControlsMixin:
             min(400, round(divisions * 100)),
         )
 
+        if self.vertical_position_divisions != slider_value / 100.0:
+            self._clear_fastact_for_vertical_change()
         self.vertical_position_divisions = slider_value / 100.0
 
         # Desplaza el rango visible, sin modificar las muestras.

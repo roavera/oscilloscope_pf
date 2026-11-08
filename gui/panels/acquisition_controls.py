@@ -84,6 +84,7 @@ class AcquisitionControls(QGroupBox):
             ("Alta resolución", "high_resolution"),
             ("Envolvente", "envelope"),
             ("Roll (barrido continuo)", "roll"),
+            ("FastAct (persistencia)", "fastact"),
         )
         for label, value in modes:
             self.mode_combo.addItem(label, value)
@@ -142,7 +143,8 @@ class AcquisitionControls(QGroupBox):
             "SINGLE completa N capturas y congela ambos canales.\n"
             "Hi-Res promedia muestras vecinas de una captura. "
             "Roll muestra un historial continuo sin disparo. "
-            "Las interpolaciones pendientes siguen deshabilitadas."
+            "Las interpolaciones pendientes siguen deshabilitadas. "
+            "FastAct suma densidad de capturas con persistencia visual de 2 segundos."
         )
         note.setWordWrap(True)
         dialog_layout.addWidget(note)

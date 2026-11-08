@@ -23,6 +23,7 @@ from gui.oscilloscope.processing import ProcessingMixin
 from gui.oscilloscope.display import DisplayMixin
 from gui.oscilloscope.math_trace import MathTraceMixin
 from gui.oscilloscope.roll import RollMixin
+from gui.oscilloscope.fastact import FastActMixin
 from gui.oscilloscope.controls import ControlsMixin
 
 
@@ -33,6 +34,7 @@ class OscilloscopeWidget(
     DisplayMixin,
     MathTraceMixin,
     RollMixin,
+    FastActMixin,
     ControlsMixin,
     QWidget,
 ):
@@ -133,6 +135,8 @@ class OscilloscopeWidget(
         self.voltage_calibration = VoltageCalibration()
         self._last_raw_display_buffer = None
         self._roll_history = None
+        self._fastact_density = None
+        self._fastact_last_refresh = monotonic()
         
         # Procesador de modos de adquisición
         self.acquisition_processor = AcquisitionProcessor()

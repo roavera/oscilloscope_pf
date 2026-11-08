@@ -1,6 +1,7 @@
 """Representación y recorte de capturas; estado mostrado en los controles."""
 
 from copy import deepcopy
+from time import monotonic
 import numpy as np
 from acquisition.modes.envelope import EnvelopeResult
 
@@ -61,6 +62,9 @@ class DisplayMixin:
         """Redibuja usando únicamente el buffer guardado."""
         if self.acquisition_processor.get_mode() == "roll":
             self._redraw_roll()
+            return
+        if self.acquisition_processor.get_mode() == "fastact":
+            self._redraw_fastact()
             return
 
         if self.last_envelope is not None:
@@ -177,6 +181,16 @@ class DisplayMixin:
             )
             return
 
+        if self.acquisition_processor.get_mode() == "fastact":
+            number = self._fastact_density.captures if self._fastact_density is not None else 0
+            last = getattr(self, "_fastact_last_trigger_time", None)
+            recent = last is not None and monotonic() - last <= 0.5
+            state = ("STOP · FASTACT" if not self.running else
+                     "FASTACT: acumulando disparos" if recent else
+                     "FASTACT: esperando disparo (sin barrido libre)")
+            self.controls.acquisition_controls.show_capture_progress(0, 1)
+            self.controls.show_state(self.running, f"{state} · {number} capturas · persistencia 2 s")
+            return
         if self.acquisition_processor.get_mode() == "roll":
             status = "ROLL: barrido continuo (sin trigger)" if self.running else "STOP · ROLL"
             self.controls.acquisition_controls.show_capture_progress(0, 1)
