@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.stereo_buffer import StereoBuffer
+from acquisition.voltage_calibration import VoltageCalibration
 from acquisition.acquisition_processor import AcquisitionProcessor
 from acquisition.capture_sequence import CaptureSequence
 from exporting.capture_export import CaptureArchive
@@ -126,7 +127,9 @@ class OscilloscopeWidget(
         # COMPONENTES
         # ============================================================
 
-        self.buffer = StereoBuffer(self.sample_rate)
+        self.buffer = StereoBuffer(self.sample_rate)  # Muestras PCM24 normalizadas
+        self.voltage_calibration = VoltageCalibration()
+        self._last_raw_display_buffer = None
         
         # Procesador de modos de adquisición
         self.acquisition_processor = AcquisitionProcessor()
@@ -174,6 +177,10 @@ class OscilloscopeWidget(
         self.controls.ch2_controls.set_volts_per_division(self.ch2_volts_per_division)
         self.controls.ch2_controls.set_position(self.ch2_position_divisions)
         self.plot.set_channel_settings(2, scale=self.ch2_volts_per_division)
+        self.plot.set_calibration_label(
+            self.voltage_calibration.status(self.acquisition.source),
+            in_volts=self.voltage_calibration.has_volts(self.acquisition.source),
+        )
         self.cursor_controls = self.controls.cursor_controls
         self.create_interface()
         self.export_controls = ExportControls(self)

@@ -51,6 +51,7 @@ class ProcessingMixin:
             self.last_acquisition = None
             self.last_envelope = None
             self._last_display_buffer = None
+            self._last_raw_display_buffer = None
             self._last_trigger_index = None
             self._last_fractional_offset = 0.0
             self.plot.clear_signal()
@@ -132,43 +133,32 @@ class ProcessingMixin:
             # Conservar el solapamiento necesario para pre/post-trigger y
             # cruces entre bloques, sin copiar un segundo entero en cada tick.
             count = max(0, total - self._last_snapshot_end) + self.display_samples + 2
-            data = self.buffer.get_data(count)
-            first_sample = total - len(data)
+            raw_data = self.buffer.get_data(count)
+            first_sample = total - len(raw_data)
             self._last_snapshot_end = total
             self._new_data = False
+
+        # Una sola conversión RAW -> V antes de trigger, modos y MATH.
+        # El búfer retiene siempre los float32 PCM24 originales.
+        data = self.voltage_calibration.apply(raw_data, self.acquisition.source)
 
         if len(data) < self.display_samples:
             return
 
         if self.acquisition_processor.get_mode() in ("average", "envelope"):
-            self._process_triggered_captures(data, first_sample)
+            self._process_triggered_captures(data, first_sample, raw_data=raw_data)
             return
 
-        # Señal original utilizada para buscar el disparo
-        trigger_signal = data[:, self.trigger_channel - 1]
-
-        # Acondicionamiento temporal exclusivo del trigger en Hi-Res
-        if self.acquisition_processor.get_mode() == "high_resolution":
-            window = min(21, len(trigger_signal))
-
-            if window % 2 == 0:
-                window -= 1
-
-            if window >= 3:
-                kernel = np.ones(window, dtype=np.float64) / window
-                trigger_signal = np.convolve(
-                    trigger_signal,
-                    kernel,
-                    mode="same",
-                )
-
-        # La captura real continúa utilizando las muestras sin filtrar
+        # Detector compartido por Sampling, Peak Detect y High Resolution.
+        # Average/Envelope usan el mismo trigger a través de CaptureSequence.
+        # La captura y sus datos originales NO se filtran aquí.
         trigger_index = self.trigger.find(
-            trigger_signal,
+            data[:, self.trigger_channel - 1],
             self.display_samples,
         )
 
         acquisition = None
+        raw_acquisition = None
         if trigger_index is not None:
             trigger_id = first_sample + trigger_index
             if trigger_id <= self._last_sampling_trigger_id:
@@ -179,6 +169,9 @@ class ProcessingMixin:
                 data,
                 trigger_index,
                 self.display_samples,
+            )
+            raw_acquisition = self.trigger.capture(
+                raw_data, trigger_index, self.display_samples,
             )
 
         self.trigger_found = acquisition is not None
@@ -199,11 +192,14 @@ class ProcessingMixin:
             self._auto_free_running = True
             # Auto sin disparo.
             self._last_display_buffer = data
+            self._last_raw_display_buffer = raw_data
             self._last_trigger_index = None
             self._last_fractional_offset = 0.0
 
             acquisition = data[-self.display_samples:].copy()
-            self._show_acquisition(acquisition)
+            self._show_acquisition(
+                acquisition, raw_acquisition=raw_data[-self.display_samples:].copy()
+            )
 
         else:
             self._last_trigger_time = monotonic()
@@ -212,6 +208,7 @@ class ProcessingMixin:
             # Guarda el contexto del disparo para poder volver
             # a recortar esta adquisición sin buscar otro cruce.
             self._last_display_buffer = data
+            self._last_raw_display_buffer = raw_data
             self._last_trigger_index = trigger_index
             self._last_fractional_offset = (
                 self.trigger.fractional_offset
@@ -228,6 +225,7 @@ class ProcessingMixin:
             self._show_acquisition(
                 acquisition,
                 trigger_sample=trigger_sample,
+                raw_acquisition=raw_acquisition,
             )
 
             if self.trigger_mode == "Single":
@@ -237,11 +235,12 @@ class ProcessingMixin:
         self.update_controls_state()
 
 
-    def _process_triggered_captures(self, data, first_sample):
+    def _process_triggered_captures(self, data, first_sample, raw_data=None):
         """Acumula un lote acotado por tick; Auto no mezcla barridos libres."""
         if self._pending_captures is None:
             self._pending_captures = self.capture_sequence.captures(
-                data, first_sample, self.display_samples, self.trigger, self.trigger_channel
+                data, first_sample, self.display_samples, self.trigger, self.trigger_channel,
+                raw_data=raw_data,
             )
         result = None
         reference = None
@@ -307,7 +306,7 @@ class ProcessingMixin:
         return np.column_stack(results)
 
 
-    def _show_acquisition(self, acquisition, trigger_sample=None):
+    def _show_acquisition(self, acquisition, trigger_sample=None, *, raw_acquisition=None):
         """
         Procesa y representa una captura del osciloscopio.
 
@@ -316,5 +315,8 @@ class ProcessingMixin:
         """
 
         processed = self._process_acquisition(acquisition)
-        self._archive_raw(acquisition, trigger_sample)
+        self._archive_raw(
+            acquisition if raw_acquisition is None else raw_acquisition,
+            trigger_sample,
+        )
         self._render_processed(processed, trigger_sample)

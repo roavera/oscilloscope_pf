@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "blackpill_usb": {
+    "ch1": {"gain_v_per_unit": 1.0, "offset_volts": 0.0, "verified": false},
+    "ch2": {"gain_v_per_unit": 1.0, "offset_volts": 0.0, "verified": false}
+  }
+}

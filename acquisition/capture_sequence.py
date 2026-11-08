@@ -1,5 +1,4 @@
-"""Capturas estéreo nuevas, completas y alineadas con un disparo común."""
-
+"""Capturas estéreo nuevas y alineadas por el detector Edge compartido."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,11 +14,11 @@ class TriggeredCapture:
 
 
 class CaptureSequence:
-    """Usa índices absolutos; el wrap del búfer no repite adquisiciones.
+    """Ventanas sin superposición, deduplicadas mediante índices absolutos.
 
-    Se eligen ventanas sin superposición. Cada muestra de ruido pertenece a
-    una sola captura del promedio. La interpolación lineal aplica el mismo
-    desplazamiento fraccional a CH1 y CH2 y requiere una muestra adicional.
+    ``trigger.crossings`` es el mismo detector que usa Sampling/Peak/Hi-Res.
+    La interpolación temporal se aplica sobre ambos canales originales; no
+    sobre los datos suavizados que se usan para detectar el disparo.
     """
 
     def __init__(self):
@@ -29,8 +28,13 @@ class CaptureSequence:
         self._minimum_trigger = int(minimum_trigger)
         self._minimum_start = 0
 
-    def captures(self, data, first_sample, display_samples, trigger, channel):
+    def captures(self, data, first_sample, display_samples, trigger, channel, *, raw_data=None):
         data = np.asarray(data, dtype=np.float32)
+        # Calibrated data is used for trigger and processing. These are
+        # the exact native PCM24-decoded samples retained for CSV export.
+        raw_data = data if raw_data is None else np.asarray(raw_data, dtype=np.float32)
+        if raw_data.shape != data.shape or not np.isfinite(raw_data).all():
+            raise ValueError("Las muestras RAW deben ser pares sincronizados finitos")
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError("Se requieren pares sincronizados (N, 2)")
         if channel not in (1, 2):
@@ -39,30 +43,15 @@ class CaptureSequence:
         if count < 2 or len(data) < count + 1:
             return
         before = int(count * trigger.position)
-        # Señal original del canal seleccionado
-        raw_signal = data[:, channel - 1]
-
-        # Filtrado temporal solo para detectar el trigger
-        window = min(21, len(raw_signal))
-        if window % 2 == 0:
-            window -= 1
-
-        if window >= 3:
-            kernel = np.ones(window, dtype=np.float64) / window
-            signal = np.convolve(raw_signal, kernel, mode="same")
-        else:
-            signal = raw_signal
-            
-        if trigger.slope == "Rising":
-            mask = (signal[:-1] < trigger.level) & (signal[1:] >= trigger.level)
-        else:
-            mask = (signal[:-1] > trigger.level) & (signal[1:] <= trigger.level)
+        # La misma referencia y banda de histéresis para los cinco modos.
+        events = trigger.crossings(data[:, channel - 1])
         low = max(before, self._minimum_trigger - first_sample,
                   self._minimum_start - first_sample + before)
         high = min(len(data) - count + before - 1, len(data) - 2)
-        crossings = np.flatnonzero(mask)
-        for index in crossings[(crossings >= low) & (crossings <= high)]:
-            index = int(index)
+        for event in events:
+            index = event.index
+            if not low <= index <= high:
+                continue
             start = index - before
             absolute_start = int(first_sample + start)
             if absolute_start < self._minimum_start:
@@ -70,15 +59,11 @@ class CaptureSequence:
             segment = data[start:start + count + 1]
             if not np.isfinite(segment).all():
                 continue
-            fraction = float((trigger.level - float(signal[index])) /
-                             (float(signal[index + 1]) - float(signal[index])))
-            fraction = float(np.clip(fraction, 0, 1))
+            fraction = event.fraction
             aligned = ((1.0 - fraction) * segment[:-1] +
                        fraction * segment[1:]).astype(np.float32)
             trigger_id = int(first_sample + index)
-            # Avanzar antes del yield: detener SINGLE no permite repetirlo.
             self._minimum_trigger = trigger_id + 1
             self._minimum_start = absolute_start + count + 1
-            yield TriggeredCapture(aligned, before, trigger_id, segment.copy(), before + fraction)
-
-
+            yield TriggeredCapture(aligned, before, trigger_id,
+                                   raw_data[start:start + count + 1].copy(), before + fraction)

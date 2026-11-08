@@ -3,6 +3,7 @@
 import numpy as np
 from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.stereo_buffer import StereoBuffer
+from acquisition.voltage_calibration import simulator_volts_to_normalized
 
 
 class AcquisitionMixin:
@@ -170,7 +171,9 @@ class AcquisitionMixin:
     def _configure_simulator_channel(self, channel, settings):
         if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
             try:
-                self.configure_simulator(channel=channel, **settings)
+                # La interfaz trabaja en voltios, el simulador en PCM24 normalizado.
+                normalized = simulator_volts_to_normalized(settings)
+                self.configure_simulator(channel=channel, **normalized)
             except (ValueError, RuntimeError) as exc:
                 self.acquisition_error.emit(str(exc))
 
@@ -184,7 +187,10 @@ class AcquisitionMixin:
 
 
     def configure_simulator(self, channel=0, **kwargs):
-        """Actualiza la señal simulada sin reiniciar la adquisición."""
+        """API de bajo nivel: parámetros en unidades PCM24 normalizadas.
+
+        Los controles de la interfaz se convierten de voltios antes de entrar aquí.
+        """
         self.acquisition.configure_simulator(channel=channel, **kwargs)
         with self._buffer_lock:
             self.buffer.clear()
@@ -205,6 +211,10 @@ class AcquisitionMixin:
             self._pending_discontinuity = False
             self._new_data = False
         self._reset_processing()
+        self.plot.set_calibration_label(
+            self.voltage_calibration.status(self.acquisition.source),
+            in_volts=self.voltage_calibration.has_volts(self.acquisition.source),
+        )
         self.display_samples = max(
             2, int(self.sample_rate * self.time_per_division
                    * self.horizontal_divisions)
@@ -214,6 +224,7 @@ class AcquisitionMixin:
         self.last_acquisition = None
         self.last_envelope = None
         self._last_display_buffer = None
+        self._last_raw_display_buffer = None
         self._last_trigger_index = None
         self._last_fractional_offset = 0.0
         self.plot.clear_signal()

@@ -14,6 +14,7 @@ class DisplayMixin:
             self.last_acquisition = None
             self._last_render_trigger_sample = trigger_sample
             self._last_display_buffer = None
+            self._last_raw_display_buffer = None
             self.plot.set_envelope(
                 self.last_envelope.minimum, self.last_envelope.maximum,
                 self.sample_rate, trigger_sample=trigger_sample,
@@ -33,6 +34,7 @@ class DisplayMixin:
         self._last_render_trigger_sample = trigger_sample
         if self.acquisition_processor.get_mode() == "average":
             self._last_display_buffer = None
+            self._last_raw_display_buffer = None
         factor = self._last_high_resolution_factor
         reference = (
             None if trigger_sample is None else
@@ -44,6 +46,16 @@ class DisplayMixin:
             trigger_sample=reference,
         )
 
+
+    def _latest_raw_recut(self):
+        """Mismo recorte temporal, pero de muestras RAW normalizadas."""
+        native = getattr(self, "_last_raw_display_buffer", None)
+        if native is None or len(native) < self.display_samples:
+            return None
+        if self._last_trigger_index is not None:
+            return self.trigger.capture(native, self._last_trigger_index,
+                                        self.display_samples)
+        return native[-self.display_samples:].copy()
 
     def _redraw_last_acquisition(self):
         """Redibuja usando únicamente el buffer guardado."""
@@ -76,7 +88,9 @@ class DisplayMixin:
             else:
                 raw = data[-self.display_samples:].copy()
                 trigger_sample = None
-            self._show_acquisition(raw, trigger_sample)
+            self._show_acquisition(
+                raw, trigger_sample, raw_acquisition=self._latest_raw_recut(),
+            )
             return
 
         # Un promedio congelado conserva sus valores y su origen temporal.
@@ -123,7 +137,9 @@ class DisplayMixin:
                 acquisition,
                 trigger_sample=trigger_sample,
             )
-            self._recut_sampling_math(acquisition, trigger_sample)
+            self._recut_sampling_math(
+                acquisition, trigger_sample, raw_acquisition=self._latest_raw_recut()
+            )
 
         else:
             # Sin disparo no existe una referencia temporal
@@ -139,7 +155,9 @@ class DisplayMixin:
 
             acquisition = data[-self.display_samples:].copy()
             self._render_acquisition(acquisition)
-            self._recut_sampling_math(acquisition)
+            self._recut_sampling_math(
+                acquisition, raw_acquisition=self._latest_raw_recut()
+            )
 
 
     def update_controls_state(self):

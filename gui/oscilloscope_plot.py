@@ -145,6 +145,8 @@ class OscilloscopePlot(QWidget):
         self._math_bounds = None
         self._math_x = np.array([], dtype=float)
         self.display_theme = "dark"
+        self.calibration_label = "Sin calibrar"
+        self.voltage_units = False
         self.create_interface()
             
     def set_grid_enabled(self, enabled: bool):
@@ -512,7 +514,10 @@ class OscilloscopePlot(QWidget):
         self.math_curve.setVisible(self.math_visible and signal)
         for item in (self.math_lower, self.math_upper, self.math_fill):
             item.setVisible(self.math_visible and envelope)
-        self.math_legend.setText(f"MATH = {self.math_expression} · {self.math_scale:g} u.a./div")
+        unit = "V" if self.voltage_units else "u.a."
+        self.math_legend.setText(
+            f"MATH = {self.math_expression} · {self.math_scale:g} {unit}/div"
+        )
         self.math_legend.setPos(self.horizontal_position, self.vertical_divisions/2 - 0.35)
         self.math_legend.setVisible(self.math_visible and (signal or envelope))
 
@@ -536,6 +541,12 @@ class OscilloscopePlot(QWidget):
         self.trigger_channel = channel
         self.update_scales()
 
+    def set_calibration_label(self, label, *, in_volts=False):
+        self.calibration_label = str(label)
+        self.voltage_units = bool(in_volts)
+        self._refresh_channel_curves()
+        self._refresh_math()
+
     def _refresh_channel_curves(self):
         envelope = self._raw_envelope is not None
         for ch, curve in ((1, self.curve), (2, self.curve_ch2)):
@@ -555,7 +566,9 @@ class OscilloscopePlot(QWidget):
         text = "   ".join(f"CH{ch}: {self.channel_scales[ch]:g}/div" +
                            ("" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
         mode = " · " + getattr(self, "_bounds_label", "Envolvente") if envelope else ""
-        self.channel_legend.setText(text + f" · Trigger CH{self.trigger_channel} · USB sin calibrar" + mode)
+        self.channel_legend.setText(
+            text + f" · Trigger CH{self.trigger_channel} · {self.calibration_label}" + mode
+        )
         self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
         self._refresh_cursors()
 

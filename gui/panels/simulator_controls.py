@@ -27,15 +27,18 @@ class SimulatorControls(QGroupBox):
         form.addRow("Entrada:", source_row)
 
         self.frequency = self._spin(1.0, 20000.0, 1000.0, 10.0, " Hz", 2)
-        self.amplitude = self._spin(0.0, 1.0, 0.5, 0.05, "", 3)
-        self.offset = self._spin(-1.0, 1.0, 0.0, 0.05, "", 3)
-        self.noise = self._spin(0.0, 0.5, 0.0, 0.005, " RMS", 3)
+        self.amplitude = self._spin(0.0, 3.0, 1.5, 0.05, " V", 3)
+        self.offset = self._spin(-3.0, 3.0, 0.0, 0.05, " V", 3)
+        self.noise = self._spin(0.0, 3.0, 0.0, 0.005, " V RMS", 3)
         form.addRow("Frecuencia:", self.frequency)
         form.addRow("Amplitud pico:", self.amplitude)
         form.addRow("Offset:", self.offset)
         form.addRow("Ruido (σ):", self.noise)
         layout.addLayout(form)
-        info = QLabel("Amplitud, offset y ruido en unidades normalizadas (no V calibrados).")
+        info = QLabel(
+            "Amplitud, offset y ruido en voltios simulados. ADC virtual ±3 V: "
+            "la señal se recorta al exceder ese rango."
+        )
         info.setWordWrap(True)
         layout.addWidget(info)
         self.channel_enabled.toggled.connect(self._emit_settings)

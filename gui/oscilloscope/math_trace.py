@@ -86,8 +86,12 @@ class MathTraceMixin:
         self._render_math(self.last_math, self._last_math_reference)
 
 
-    def _recut_sampling_math(self, acquisition, trigger_sample=None):
-        self._archive_raw(acquisition, trigger_sample)
+    def _recut_sampling_math(self, acquisition, trigger_sample=None, *, raw_acquisition=None):
+        # El histórico CSV guarda las muestras normalizadas originales.
+        self._archive_raw(
+            acquisition if raw_acquisition is None else raw_acquisition,
+            trigger_sample,
+        )
         self.capture_archive.publish()
         self.export_controls.refresh()
         self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
