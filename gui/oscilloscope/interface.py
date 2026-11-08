@@ -151,6 +151,10 @@ class InterfaceMixin:
         self.controls.acquisition_mode_changed.connect(
             self.set_acquisition_mode
         )
+        # Transformación exclusivamente visual, incluso con STOP.
+        self.controls.interpolation_changed.connect(
+            self.plot.set_interpolation_mode
+        )
         self.controls.acquisition_controls.peak_bucket_size_changed.connect(self.set_peak_bucket_size)
         self.controls.acquisition_controls.high_resolution_factor_changed.connect(
             self.set_high_resolution_factor

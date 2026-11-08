@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QGraphicsObject, QWidget, QVBoxLayout
 
 from .theme.colors import PLOT_COLORS
 from .oscilloscope_grid import OscilloscopeGrid
+from .display_interpolation import MODES, interpolate_display
 
 class ChannelMarker(QGraphicsObject):
     """Marcador de cero de cada canal, arrastrable en divisiones."""
@@ -148,6 +149,7 @@ class OscilloscopePlot(QWidget):
         self.display_theme = "dark"
         self.calibration_label = "Sin calibrar"
         self.voltage_units = False
+        self.interpolation_mode = "linear"
         self.create_interface()
         self._init_fastact_overlay()
             
@@ -247,6 +249,8 @@ class OscilloscopePlot(QWidget):
         self.plot_widget.update()
         
         self.grid.set_theme(theme_name)
+        self._refresh_channel_curves()
+        self._refresh_math()
 
     def _update_grid(self, *args):
         view = self.plot_widget.getViewBox()
@@ -509,7 +513,10 @@ class OscilloscopePlot(QWidget):
         signal = self._math_values is not None and self._math_values.size > 0
         envelope = self._math_bounds is not None and self._math_bounds[0].size > 0
         if signal:
-            self.math_curve.setData(self._math_x, convert(self._math_values))
+            self._draw_interpolated_curve(
+                self.math_curve, self._math_x, convert(self._math_values),
+                channel=1, math_trace=True,
+            )
         if envelope:
             self.math_lower.setData(self._math_x, convert(self._math_bounds[0]))
             self.math_upper.setData(self._math_x, convert(self._math_bounds[1]))
@@ -584,14 +591,50 @@ class OscilloscopePlot(QWidget):
         self._refresh_channel_curves()
         self._refresh_math()
 
+    def set_interpolation_mode(self, mode):
+        """Selecciona el método VISUAL sin modificar las capturas ni la fs."""
+        mode = str(mode)
+        if mode not in MODES:
+            raise ValueError(f"Interpolación desconocida: {mode}")
+        if mode == self.interpolation_mode:
+            return
+        self.interpolation_mode = mode
+        self._refresh_channel_curves()
+        self._refresh_math()
+
+    def _draw_interpolated_curve(self, curve, x, y, channel=1, *, math_trace=False):
+        """Solo pyqtgraph ve estos vectores; cursores y mediciones usan RAW."""
+        if math_trace:
+            color = "#c993ff" if self.display_theme == "dark" else "#8b36c7"
+            width = 1.6
+        else:
+            color = PLOT_COLORS[self.display_theme]["ch1"] if channel == 1 else "#38cfff"
+            width = 2.0
+        if self.interpolation_mode == "none":
+            # Evita miles de objetos gráficos en escalas de tiempo grandes.
+            count = len(x)
+            stride = max(1, (count + 1499) // 1500)
+            curve.setData(
+                np.asarray(x)[::stride], np.asarray(y)[::stride],
+                pen=None, symbol="o", symbolSize=4,
+                symbolPen=None, symbolBrush=pg.mkBrush(color),
+            )
+        else:
+            px, py = interpolate_display(x, y, self.interpolation_mode)
+            curve.setData(
+                px, py, pen=pg.mkPen(color, width=width), symbol=None,
+            )
+
     def _refresh_channel_curves(self):
         envelope = self._raw_envelope is not None
         for ch, curve in ((1, self.curve), (2, self.curve_ch2)):
             visible = self.channel_visible[ch]
             curve.setVisible(visible and not envelope)
             if self._raw_channels is not None:
-                curve.setData(self._cursor_signal_x,
-                              self._to_display(self._raw_channels[:, ch-1], ch))
+                self._draw_interpolated_curve(
+                    curve, self._cursor_signal_x,
+                    self._to_display(self._raw_channels[:, ch-1], ch), channel=ch,
+                )
             lower, upper = self.envelope_curves[ch]
             if envelope:
                 minimum, maximum = self._raw_envelope

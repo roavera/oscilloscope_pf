@@ -100,8 +100,7 @@ class AcquisitionControls(QGroupBox):
         )
         for label, value in interpolations:
             self.interpolation_combo.addItem(label, value)
-        for index in (0, 2, 3):
-            self.interpolation_combo.model().item(index).setEnabled(False)
+        # Los cuatro modos están disponibles: afectan solo al dibujo.
         self.interpolation_combo.setCurrentIndex(1)
         self.interpolation_combo.setToolTip("Representación visual entre muestras")
 
@@ -143,7 +142,7 @@ class AcquisitionControls(QGroupBox):
             "SINGLE completa N capturas y congela ambos canales.\n"
             "Hi-Res promedia muestras vecinas de una captura. "
             "Roll muestra un historial continuo sin disparo. "
-            "Las interpolaciones pendientes siguen deshabilitadas. "
+            "Puntos, Lineal, Cúbica y Sinc cambian solo el dibujo, no los datos. "
             "FastAct suma densidad de capturas con persistencia visual de 2 segundos."
         )
         note.setWordWrap(True)
