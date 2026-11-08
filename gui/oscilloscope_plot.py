@@ -135,6 +135,7 @@ class OscilloscopePlot(QWidget):
         self.channel_positions = {1: -self.vertical_offset / self.volts_per_division, 2: 0.0}
         self.channel_visible = {1: True, 2: True}
         self.trigger_channel = 1
+        self.roll_active = False
         self._raw_channels = None
         self._raw_envelope = None
         self.math_visible = False
@@ -541,6 +542,14 @@ class OscilloscopePlot(QWidget):
         self.trigger_channel = channel
         self.update_scales()
 
+    def set_roll_mode(self, active):
+        """Oculta los marcadores de disparo en Roll."""
+        self.roll_active = bool(active)
+        self.trigger_line.setVisible(not self.roll_active)
+        self.trigger_vertical_line.setVisible(not self.roll_active)
+        self._update_trigger_notice()
+        self._refresh_channel_curves()
+
     def set_calibration_label(self, label, *, in_volts=False):
         self.calibration_label = str(label)
         self.voltage_units = bool(in_volts)
@@ -567,7 +576,9 @@ class OscilloscopePlot(QWidget):
                            ("" if self.channel_visible[ch] else " (oculto)") for ch in (1, 2))
         mode = " · " + getattr(self, "_bounds_label", "Envolvente") if envelope else ""
         self.channel_legend.setText(
-            text + f" · Trigger CH{self.trigger_channel} · {self.calibration_label}" + mode
+            text + (" · ROLL (sin trigger)" if self.roll_active else
+                    f" · Trigger CH{self.trigger_channel}") +
+            f" · {self.calibration_label}" + mode
         )
         self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
         self._refresh_cursors()
@@ -650,7 +661,7 @@ class OscilloscopePlot(QWidget):
                 f"{self.trigger_level:+.6g} V"
             )
 
-        self.trigger_notice.setVisible(outside)
+        self.trigger_notice.setVisible(outside and not self.roll_active)
 
     # ================================================================
     # ARRASTRE DEL TRIGGER
@@ -771,6 +782,38 @@ class OscilloscopePlot(QWidget):
         self._cursor_signal_y = data[:, 0].copy()
         self._refresh_channel_curves()
         self._refresh_cursors()
+
+    def set_roll_signal(self, samples, relative_seconds):
+        """Coloca el dato nuevo a la derecha, sin trigger."""
+        data = np.asarray(samples, dtype=np.float32)
+        offsets = np.asarray(relative_seconds, dtype=np.float64)
+        if (data.ndim != 2 or data.shape[1] != 2 or
+            offsets.shape != (len(data),) or
+            not np.isfinite(data).all() or not np.isfinite(offsets).all() or
+            np.any(np.diff(offsets) < 0)):
+            raise ValueError("Datos temporales Roll inválidos")
+        if not len(data):
+            self.clear_signal()
+            return
+        span = self.time_per_division * self.horizontal_divisions
+        self._cursor_signal_x = self.horizontal_position + span + offsets
+        self._cursor_signal_y = data[:, 0].copy()
+        self._raw_envelope = None
+        self._raw_channels = data.copy()
+        self._refresh_channel_curves()
+        self._refresh_cursors()
+
+    def set_roll_math_signal(self, values, relative_seconds):
+        values = np.asarray(values, dtype=np.float32)
+        offsets = np.asarray(relative_seconds, dtype=np.float64)
+        if (values.ndim != 1 or offsets.shape != values.shape or
+            not np.isfinite(values).all() or not np.isfinite(offsets).all()):
+            raise ValueError("MATH Roll inválida")
+        span = self.time_per_division * self.horizontal_divisions
+        self._math_x = self.horizontal_position + span + offsets
+        self._math_values = values.copy()
+        self._math_bounds = None
+        self._refresh_math()
 
     def clear_signal(self):
         """Limpia las trazas conservando escalas y referencias."""

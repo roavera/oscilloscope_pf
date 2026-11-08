@@ -27,6 +27,15 @@ class HorizontalControls(QGroupBox):
         self._time_per_division = 0.001
         self._position_divisions = 0.0
         self.time_options = {
+            "10 s/div": 10.0,
+            "5 s/div": 5.0,
+            "2 s/div": 2.0,
+            "1 s/div": 1.0,
+            "500 ms/div": 0.5,
+            "200 ms/div": 0.2,
+            "100 ms/div": 0.1,
+            "50 ms/div": 0.05,
+            "20 ms/div": 0.02,
             "10 ms/div": 0.010,
             "5 ms/div": 0.005,
             "2 ms/div": 0.002,
@@ -60,8 +69,8 @@ class HorizontalControls(QGroupBox):
             minimum=0,
             maximum=len(self.time_options) - 1,
             step=1,
-            initial=3,
-            reset_value=3,
+            initial=list(self.time_options).index("1 ms/div"),
+            reset_value=list(self.time_options).index("1 ms/div"),
             pixels_per_step=12.0,
             size=64,
         )

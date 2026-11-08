@@ -28,6 +28,8 @@ class ProcessingMixin:
         self._pending_captures = None
         self._last_trigger_time = monotonic()
         self._auto_free_running = False
+        if self.acquisition_processor.get_mode() == "roll":
+            self._reset_roll_history()
 
 
     def reset_accumulation(self, _checked=False):
@@ -61,12 +63,28 @@ class ProcessingMixin:
 
 
     def set_acquisition_mode(self, mode):
-        if mode not in ("sampling", "peak_detect", "average", "envelope", "high_resolution"):
+        if mode not in ("sampling", "peak_detect", "average", "envelope", "high_resolution", "roll"):
             raise ValueError(f"Modo no disponible: {mode}")
-        if mode != self.acquisition_processor.get_mode():
+        previous = self.acquisition_processor.get_mode()
+        if mode != previous:
+            if mode == "roll":
+                self._pre_roll_time_per_division = self.time_per_division
             self.acquisition_processor.set_mode(mode)
             self._reset_processing()
             self.trigger_found = False
+            if previous == "roll":
+                self._roll_history = None
+                self.last_acquisition = None
+                self.last_envelope = None
+                self.last_math = None
+                self.plot.clear_signal()
+                self.capture_archive.clear()
+        self.plot.set_roll_mode(mode == "roll")
+        if mode == "roll" and previous != "roll" and self.time_per_division < 0.1:
+            self.set_time_per_division(0.5)  # 6 segundos por pantalla
+        elif previous == "roll" and mode != "roll":
+            previous_time = getattr(self, "_pre_roll_time_per_division", 0.001)
+            self.set_time_per_division(min(previous_time, 0.05))
         self.controls.set_acquisition_mode(mode)
         self.update_controls_state()
 
@@ -132,8 +150,11 @@ class ProcessingMixin:
             total = self.buffer.total_samples
             # Conservar el solapamiento necesario para pre/post-trigger y
             # cruces entre bloques, sin copiar un segundo entero en cada tick.
-            count = max(0, total - self._last_snapshot_end) + self.display_samples + 2
+            mode = self.acquisition_processor.get_mode()
+            new_count = max(0, total - self._last_snapshot_end)
+            count = new_count if mode == "roll" else new_count + self.display_samples + 2
             raw_data = self.buffer.get_data(count)
+            roll_lost = mode == "roll" and len(raw_data) < new_count
             first_sample = total - len(raw_data)
             self._last_snapshot_end = total
             self._new_data = False
@@ -141,6 +162,13 @@ class ProcessingMixin:
         # Una sola conversión RAW -> V antes de trigger, modos y MATH.
         # El búfer retiene siempre los float32 PCM24 originales.
         data = self.voltage_calibration.apply(raw_data, self.acquisition.source)
+
+        if mode == "roll":
+            if roll_lost:
+                self._reset_roll_history()  # Evita unir bloques con saltos.
+            if len(data):
+                self._process_roll_data(data)
+            return
 
         if len(data) < self.display_samples:
             return

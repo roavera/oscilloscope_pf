@@ -46,7 +46,10 @@ class MathTraceMixin:
         self.controls.math_controls.set_configuration(self.math_processor.math.config)
         self.plot.set_math_settings(expression=self.math_processor.math.expression)
         self._math_error = None
-        self._render_math(result, self._last_math_reference)
+        if self.acquisition_processor.get_mode() == "roll":
+            self._redraw_roll()
+        else:
+            self._render_math(result, self._last_math_reference)
 
 
     def _update_math_status(self):

@@ -36,6 +36,8 @@ class ControlsMixin:
 
         if not np.isfinite(value) or value <= 0:
             return
+        if self.acquisition_processor.get_mode() != "roll":
+            value = min(value, 0.05)  # Historial no-Roll limitado a < 1 s.
 
         if value != self.time_per_division:
             self._reset_processing()
@@ -51,6 +53,8 @@ class ControlsMixin:
         )
 
         self.plot.set_time_per_division(value)
+        if self.acquisition_processor.get_mode() == "roll":
+            self._reset_roll_history()
         self.controls.set_time_per_division(value)
 
         self._redraw_last_acquisition()
@@ -79,7 +83,8 @@ class ControlsMixin:
             / self.horizontal_divisions
         )
 
-        if self.trigger.position != self.trigger_position:
+        if (self.trigger.position != self.trigger_position and
+                self.acquisition_processor.get_mode() != "roll"):
             self._reset_processing()
         self.trigger.set_position(self.trigger_position)
         self.plot.set_trigger_position(self.trigger_position)

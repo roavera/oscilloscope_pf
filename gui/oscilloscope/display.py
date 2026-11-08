@@ -59,6 +59,9 @@ class DisplayMixin:
 
     def _redraw_last_acquisition(self):
         """Redibuja usando únicamente el buffer guardado."""
+        if self.acquisition_processor.get_mode() == "roll":
+            self._redraw_roll()
+            return
 
         if self.last_envelope is not None:
             self.plot.set_envelope(
@@ -174,6 +177,11 @@ class DisplayMixin:
             )
             return
 
+        if self.acquisition_processor.get_mode() == "roll":
+            status = "ROLL: barrido continuo (sin trigger)" if self.running else "STOP · ROLL"
+            self.controls.acquisition_controls.show_capture_progress(0, 1)
+            self.controls.show_state(self.running, status)
+            return
         if not self.running:
             status = "STOP · SINGLE completo" if self.single_mode else "STOP"
         elif self.trigger_mode == "Single":
