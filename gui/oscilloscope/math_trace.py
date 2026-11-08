@@ -63,16 +63,22 @@ class MathTraceMixin:
 
     def _render_math(self, result, trigger_sample=None):
         self._last_math_reference = trigger_sample
+        factor = self._last_high_resolution_factor
+        display_rate = self.sample_rate / factor
+        display_reference = (
+            None if trigger_sample is None else
+            (trigger_sample - (factor - 1) / 2) / factor
+        )
         if result is None:
             self.last_math = None
             self.plot.clear_math()
         elif isinstance(result, EnvelopeResult):
             self.last_math = deepcopy(result)
-            self.plot.set_math_envelope(result.minimum, result.maximum, self.sample_rate, trigger_sample,
+            self.plot.set_math_envelope(result.minimum, result.maximum, display_rate, display_reference,
                                         sample_positions=getattr(result, "sample_positions", None))
         else:
             self.last_math = np.asarray(result, dtype=np.float32).copy()
-            self.plot.set_math_signal(self.last_math, self.sample_rate, trigger_sample)
+            self.plot.set_math_signal(self.last_math, display_rate, display_reference)
         self._update_math_status()
 
 

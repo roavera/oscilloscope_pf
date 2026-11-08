@@ -22,7 +22,7 @@ Modos:
     roll
 
 NOTA:
-    Sampling, Peak Detect, Average y Envelope están implementados.
+    Sampling, Peak Detect, Average, Envelope y High Resolution están implementados.
     Los demás modos se incorporarán progresivamente.
     FastAct y Roll requieren integración con la actualización de pantalla.
 ===============================================================================
@@ -37,6 +37,7 @@ from acquisition.modes.sampling import process_sampling
 from acquisition.modes.peak_detect import process_peak_detect
 from acquisition.modes.average import process_average
 from acquisition.modes.envelope import process_envelope, EnvelopeResult
+from acquisition.modes.high_resolution import process_high_resolution, HIGH_RESOLUTION_FACTORS
 
 @dataclass
 class AcquisitionConfig:
@@ -80,6 +81,7 @@ class AcquisitionProcessor:
 
     AVERAGE_OPTIONS = (4, 16, 32, 64, 128, 256)
     ENVELOPE_OPTIONS = AVERAGE_OPTIONS
+    HIGH_RESOLUTION_OPTIONS = HIGH_RESOLUTION_FACTORS
 
     DISPLAY_MODES = (FASTACT, ROLL)
 
@@ -101,6 +103,7 @@ class AcquisitionProcessor:
             self.PEAK_DETECT: process_peak_detect,
             self.AVERAGE: process_average,
             self.ENVELOPE: process_envelope,
+            self.HIGH_RESOLUTION: process_high_resolution,
         }
     # ============================================================
     # VALIDACIÓN
@@ -133,6 +136,9 @@ class AcquisitionProcessor:
         if (not self._positive_integer(config.envelope_count)
                 or config.envelope_count not in self.ENVELOPE_OPTIONS):
             raise ValueError("envelope_count debe ser 4, 16, 32, 64, 128 o 256")
+
+        if config.high_resolution_factor not in self.HIGH_RESOLUTION_OPTIONS:
+            raise ValueError("high_resolution_factor debe ser 1, 2, 4, 8 o 16")
 
         if config.peak_bucket_size not in (2, 4, 8, 16):
             raise ValueError("peak_bucket_size debe ser 2, 4, 8 o 16")
@@ -167,6 +173,12 @@ class AcquisitionProcessor:
         """
 
         self.configure(average_count=count)
+
+    def set_high_resolution_factor(self, factor):
+        self.configure(high_resolution_factor=factor)
+
+    def get_high_resolution_factor(self):
+        return self.config.high_resolution_factor
 
     def set_envelope_count(self, count):
         self.configure(envelope_count=count)
@@ -221,7 +233,7 @@ class AcquisitionProcessor:
         El algoritmo debe aceptar:
             processor(samples, channel, config, state)
 
-        Sampling, Peak Detect, Average y Envelope ya vienen registrados.
+        Sampling, Peak Detect, Average, Envelope y High Resolution están registrados.
 
         Los demás se registrarán al implementar
         los archivos de acquisition/modes/.

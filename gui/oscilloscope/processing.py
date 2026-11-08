@@ -4,6 +4,7 @@ from time import monotonic
 import numpy as np
 from acquisition.modes.envelope import EnvelopeResult
 from acquisition.modes.peak_detect import PeakDetectResult
+from acquisition.modes.high_resolution import effective_high_resolution_factor
 from exporting.capture_export import raw_capture
 
 
@@ -59,7 +60,7 @@ class ProcessingMixin:
 
 
     def set_acquisition_mode(self, mode):
-        if mode not in ("sampling", "peak_detect", "average", "envelope"):
+        if mode not in ("sampling", "peak_detect", "average", "envelope", "high_resolution"):
             raise ValueError(f"Modo no disponible: {mode}")
         if mode != self.acquisition_processor.get_mode():
             self.acquisition_processor.set_mode(mode)
@@ -68,6 +69,17 @@ class ProcessingMixin:
         self.controls.set_acquisition_mode(mode)
         self.update_controls_state()
 
+
+    def set_high_resolution_factor(self, factor):
+        if factor != self.acquisition_processor.get_high_resolution_factor():
+            self.acquisition_processor.set_high_resolution_factor(factor)
+            self._reset_processing()
+            self.trigger_found = False
+            if self.acquisition_processor.get_mode() == "high_resolution":
+                self._redraw_last_acquisition()
+        if factor != 1:
+            self.controls.acquisition_controls.set_high_resolution_factor(factor)
+        self.update_controls_state()
 
     def set_peak_bucket_size(self, count):
         self.acquisition_processor.configure(peak_bucket_size=count)
@@ -132,8 +144,27 @@ class ProcessingMixin:
             self._process_triggered_captures(data, first_sample)
             return
 
+        # Señal original utilizada para buscar el disparo
+        trigger_signal = data[:, self.trigger_channel - 1]
+
+        # Acondicionamiento temporal exclusivo del trigger en Hi-Res
+        if self.acquisition_processor.get_mode() == "high_resolution":
+            window = min(21, len(trigger_signal))
+
+            if window % 2 == 0:
+                window -= 1
+
+            if window >= 3:
+                kernel = np.ones(window, dtype=np.float64) / window
+                trigger_signal = np.convolve(
+                    trigger_signal,
+                    kernel,
+                    mode="same",
+                )
+
+        # La captura real continúa utilizando las muestras sin filtrar
         trigger_index = self.trigger.find(
-            data[:, self.trigger_channel - 1],
+            trigger_signal,
             self.display_samples,
         )
 
@@ -243,6 +274,12 @@ class ProcessingMixin:
 
 
     def _process_acquisition(self, acquisition):
+        self._last_high_resolution_factor = (
+            effective_high_resolution_factor(
+                len(acquisition), self.acquisition_processor.get_high_resolution_factor()
+            )
+            if self.acquisition_processor.get_mode() == "high_resolution" else 1
+        )
         results = [
             self.acquisition_processor.process(acquisition[:, ch - 1], channel=ch)
             for ch in (1, 2)

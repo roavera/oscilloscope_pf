@@ -1,10 +1,4 @@
-"""Ventana principal con conexión Blackpill USB asíncrona.
-
-Requiere las versiones actualizadas de acquisition_manager.py y
-oscilloscope_widget.py entregadas junto con esta integración.
-Adquisición > Fuente > Blackpill USB COM abre el selector de puerto.
-STOP congela la pantalla; Desconectar detiene la fuente y cierra el COM.
-"""
+"""Ventana principal """
 
 from PySide6.QtCore import Qt, QTimer, Slot, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QActionGroup

@@ -111,7 +111,7 @@ class MathTraceProcessor:
 
     def replace_sampling_capture(self, samples, sample_rate):
         """Un recorte de Sampling reemplaza el único registro, no acumula."""
-        if self.acquisition.get_mode() != "sampling":
-            raise ValueError("El recorte directo solo se usa en Sampling")
+        if self.acquisition.get_mode() not in ("sampling", "high_resolution"):
+            raise ValueError("El recorte directo solo se usa en Sampling o Hi-Res")
         self.reset()
         return self.process(samples, sample_rate)

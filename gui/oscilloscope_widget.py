@@ -1,11 +1,4 @@
-"""Punto de entrada público del osciloscopio de dos canales.
-
-Ensambla componentes e inicializa el estado compartido. Las responsabilidades
-se distribuyen en gui.oscilloscope; ver docs/oscilloscope_architecture.md.
-Las señales y los slots Qt permanecen en esta clase para conservar la entrega
-en el hilo de la interfaz. STOP congela la pantalla sin desconectar la fuente.
-Las muestras USB siguen normalizadas, no calibradas en voltios.
-"""
+"""Punto de entrada público del osciloscopio de dos canales."""
 
 from threading import Lock
 from time import monotonic
@@ -109,6 +102,7 @@ class OscilloscopeWidget(
         self.trigger_found = False
         self.last_acquisition = None
         self.last_envelope = None
+        self._last_high_resolution_factor = 1
         self._last_peak_capture = None
         self._last_peak_config = None
         self._last_render_trigger_sample = None

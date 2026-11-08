@@ -19,6 +19,7 @@ class AcquisitionControls(QGroupBox):
     average_count_changed = Signal(int)
     envelope_count_changed = Signal(int)
     peak_bucket_size_changed = Signal(int)
+    high_resolution_factor_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__("Adquisición", parent)
@@ -85,8 +86,6 @@ class AcquisitionControls(QGroupBox):
         )
         for label, value in modes:
             self.mode_combo.addItem(label, value)
-        for index in (3,):
-            self.mode_combo.model().item(index).setEnabled(False)
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setToolTip("Procesamiento de las muestras adquiridas")
 
@@ -113,6 +112,14 @@ class AcquisitionControls(QGroupBox):
             "Mínimo y máximo por intervalo de una captura. No acumula capturas."
         )
         form.addRow("Muestras por intervalo:", self.peak_bucket_combo)
+        self.high_resolution_factor_combo = QComboBox()
+        for factor in (2, 4, 8, 16):
+            self.high_resolution_factor_combo.addItem(f"{factor} muestras", factor)
+        self.high_resolution_factor_combo.setCurrentIndex(1)
+        self.high_resolution_factor_combo.setToolTip(
+            "Cantidad de muestras consecutivas combinadas en una sola captura"
+        )
+        form.addRow("Factor Hi-Res:", self.high_resolution_factor_combo)
         self.average_count_combo = QComboBox()
         for count in (4, 16, 32, 64, 128, 256):
             self.average_count_combo.addItem(str(count), count)
@@ -132,7 +139,8 @@ class AcquisitionControls(QGroupBox):
         note = QLabel(
             "Promediado y Envolvente esperan disparos válidos, también en Auto. "
             "SINGLE completa N capturas y congela ambos canales.\n"
-            "Las opciones no implementadas permanecen deshabilitadas."
+            "Hi-Res promedia muestras vecinas de una captura. "
+            "Las interpolaciones pendientes siguen deshabilitadas."
         )
         note.setWordWrap(True)
         dialog_layout.addWidget(note)
@@ -147,6 +155,9 @@ class AcquisitionControls(QGroupBox):
         self.mode_combo.currentIndexChanged.connect(self._emit_mode)
         self.peak_bucket_combo.currentIndexChanged.connect(
             lambda _: self.peak_bucket_size_changed.emit(int(self.peak_bucket_combo.currentData()))
+        )
+        self.high_resolution_factor_combo.currentIndexChanged.connect(
+            self._emit_high_resolution_factor
         )
         self.average_count_combo.currentIndexChanged.connect(self._emit_average_count)
         self.envelope_count_combo.currentIndexChanged.connect(self._emit_envelope_count)
@@ -168,11 +179,27 @@ class AcquisitionControls(QGroupBox):
     def _update_accumulation_controls(self):
         self.settings_button.setText(self.mode_combo.currentText())
         self.peak_bucket_combo.setEnabled(self.mode_combo.currentData() == "peak_detect")
+        self.high_resolution_factor_combo.setEnabled(
+            self.mode_combo.currentData() == "high_resolution"
+        )
         enabled = self.mode_combo.currentData() == "average"
         self.average_count_combo.setEnabled(enabled)
         envelope = self.mode_combo.currentData() == "envelope"
         self.envelope_count_combo.setEnabled(envelope)
         self.average_progress_label.setEnabled(enabled or envelope)
+
+    def _emit_high_resolution_factor(self, _index):
+        self.high_resolution_factor_changed.emit(
+            int(self.high_resolution_factor_combo.currentData())
+        )
+
+    def set_high_resolution_factor(self, factor):
+        index = self._index_for(self.high_resolution_factor_combo, factor, "Factor Hi-Res")
+        blocker = QSignalBlocker(self.high_resolution_factor_combo)
+        try:
+            self.high_resolution_factor_combo.setCurrentIndex(index)
+        finally:
+            del blocker
 
     def _emit_average_count(self, _index):
         self.average_count_changed.emit(int(self.average_count_combo.currentData()))

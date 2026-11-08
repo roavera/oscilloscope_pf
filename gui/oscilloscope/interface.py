@@ -152,6 +152,9 @@ class InterfaceMixin:
             self.set_acquisition_mode
         )
         self.controls.acquisition_controls.peak_bucket_size_changed.connect(self.set_peak_bucket_size)
+        self.controls.acquisition_controls.high_resolution_factor_changed.connect(
+            self.set_high_resolution_factor
+        )
         self.controls.acquisition_controls.average_count_changed.connect(
             self.set_average_count
         )

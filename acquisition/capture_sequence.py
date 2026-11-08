@@ -39,7 +39,20 @@ class CaptureSequence:
         if count < 2 or len(data) < count + 1:
             return
         before = int(count * trigger.position)
-        signal = data[:, channel - 1]
+        # Señal original del canal seleccionado
+        raw_signal = data[:, channel - 1]
+
+        # Filtrado temporal solo para detectar el trigger
+        window = min(21, len(raw_signal))
+        if window % 2 == 0:
+            window -= 1
+
+        if window >= 3:
+            kernel = np.ones(window, dtype=np.float64) / window
+            signal = np.convolve(raw_signal, kernel, mode="same")
+        else:
+            signal = raw_signal
+            
         if trigger.slope == "Rising":
             mask = (signal[:-1] < trigger.level) & (signal[1:] >= trigger.level)
         else:

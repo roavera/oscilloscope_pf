@@ -33,10 +33,15 @@ class DisplayMixin:
         self._last_render_trigger_sample = trigger_sample
         if self.acquisition_processor.get_mode() == "average":
             self._last_display_buffer = None
+        factor = self._last_high_resolution_factor
+        reference = (
+            None if trigger_sample is None else
+            (trigger_sample - (factor - 1) / 2) / factor
+        )
         self.plot.set_signal(
             self.last_acquisition,
-            self.sample_rate,
-            trigger_sample=trigger_sample,
+            self.sample_rate / factor,
+            trigger_sample=reference,
         )
 
 
@@ -50,6 +55,28 @@ class DisplayMixin:
                 sample_positions=getattr(self.last_envelope, "sample_positions", None),
             )
             self._redraw_math()
+            return
+
+        # Hi-Res se recalcula con las muestras CRUDAS al variar Time/div;
+        # el resultado reducido nunca vuelve a reducirse.
+        if self.acquisition_processor.get_mode() == "high_resolution":
+            data = self._last_display_buffer
+            if data is None or len(data) < self.display_samples:
+                return
+            if self._last_trigger_index is not None:
+                raw = self.trigger.capture(
+                    data, self._last_trigger_index, self.display_samples
+                )
+                if raw is None:
+                    return
+                trigger_sample = (
+                    int(self.display_samples * self.trigger.position)
+                    + self._last_fractional_offset
+                )
+            else:
+                raw = data[-self.display_samples:].copy()
+                trigger_sample = None
+            self._show_acquisition(raw, trigger_sample)
             return
 
         # Un promedio congelado conserva sus valores y su origen temporal.
@@ -151,6 +178,8 @@ class DisplayMixin:
                 status += ": esperando disparo" if "esperando" not in status else ""
             label = "AVG" if mode == "average" else "ENV"
             status += f" · {label} {count}/{target}"
+        if mode == "high_resolution":
+            status += f" · HI-RES ×{self._last_high_resolution_factor}"
         if mode == "peak_detect":
             status += f" · PEAK {self.acquisition_processor.get_config().peak_bucket_size} muestras/intervalo"
         self.controls.show_state(self.running, status)
