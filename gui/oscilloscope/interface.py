@@ -1,3 +1,4 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Construcción del panel lateral y conexiones de señales de la interfaz."""
 
 from PySide6.QtCore import QSettings, QTimer, Qt
@@ -94,9 +95,18 @@ class InterfaceMixin:
         for ch, panel in ((1, self.controls.ch1_controls), (2, self.controls.ch2_controls)):
             panel.visibility_changed.connect(lambda visible, c=ch: self.plot.set_channel_settings(c, visible=visible))
         self.controls.trigger_controls.source_changed.connect(self.set_trigger_channel)
+        self.controls.trigger_controls.type_changed.connect(self.set_trigger_type)
+        self.controls.trigger_controls.pulse_width_changed.connect(self.set_pulse_width_settings)
+        self.controls.trigger_controls.timeout_changed.connect(self.set_timeout_settings)
+        self.controls.trigger_controls.runt_changed.connect(self.set_runt_settings)
+        self.controls.trigger_controls.logic_changed.connect(self.set_logic_settings)
         self.controls.trigger_controls.auto_level_clicked.connect(self.auto_trigger_level)
         self.controls.simulator_controls_ch2.settings_changed.connect(self._on_simulator_ch2_settings_changed)
         # Control horizontal.
+        nav = self.controls.horizontal_controls
+        nav.reference_changed.connect(self.set_horizontal_reference)
+        nav.delay_changed.connect(self.set_horizontal_delay)
+        nav.zoom_changed.connect(self.set_horizontal_zoom)
         self.controls.time_per_division_changed.connect(
             self.set_time_per_division
         )
@@ -106,7 +116,10 @@ class InterfaceMixin:
         )
 
         self.plot.horizontal_position_changed.connect(
-            self.set_horizontal_position
+            lambda divisions: (
+                self.set_horizontal_reference("Custom"),
+                self.set_horizontal_position(divisions),
+            )
         )
 
         # Control vertical.

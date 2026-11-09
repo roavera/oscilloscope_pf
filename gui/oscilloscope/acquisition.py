@@ -1,6 +1,8 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Ciclo de vida de las fuentes, recepción estéreo y RUN/STOP/SINGLE."""
 
 import numpy as np
+from trigger.pulse_width import PulseWidthTrigger
 from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.stereo_buffer import StereoBuffer
 from acquisition.voltage_calibration import simulator_volts_to_normalized
@@ -11,6 +13,7 @@ class AcquisitionMixin:
 
     def start_acquisition(self):
         """Solicita el arranque; USB confirma la conexión mediante señales."""
+        self._resume_horizontal_view()
         if self._closed or self.acquisition.is_connecting or self.acquisition.is_running:
             return
         # Terminar el lector anterior ANTES de cambiar sus callbacks.
@@ -155,6 +158,13 @@ class AcquisitionMixin:
             raise ValueError("Frecuencia de muestreo inválida")
         self.disconnect_acquisition()
         self.acquisition.change_source(source, rate)
+        # Impedir Logic/CH2 en sesiones realmente monofonicas.
+        self.controls.trigger_controls.set_available_channels(self.acquisition.channels)
+        if self.acquisition.channels < 2:
+            if self.trigger_kind == "logic":
+                self.set_trigger_type("edge")
+            if self.trigger_channel == 2:
+                self.set_trigger_channel(1)
         
         self.controls.set_simulator_visible(
             source == AcquisitionManager.SIMULATOR
@@ -203,12 +213,16 @@ class AcquisitionMixin:
     def reset_acquisition(self, sample_rate):
         """Descarta muestras previas y actualiza la base temporal."""
         self.capture_archive.clear()
+        self._clear_frozen_horizontal()
         rate = float(sample_rate)
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
         with self._buffer_lock:
             self.sample_rate = rate
             self.buffer = StereoBuffer(max(1, int(np.ceil(rate))))
+        # Los anchos se expresan en microsegundos; actualizar Fs al cambiar fuente.
+        if hasattr(self.trigger, "set_sample_rate"):
+            self.trigger.set_sample_rate(rate)
             self._pending_discontinuity = False
             self._new_data = False
         self._reset_processing()
@@ -279,6 +293,7 @@ class AcquisitionMixin:
             self.single()
             return
 
+        self._resume_horizontal_view()
         self._reset_processing()
         self.running = True
         self.trigger_found = False
@@ -296,7 +311,8 @@ class AcquisitionMixin:
         self.running = False
         self.single_mode = False
         self.display_timer.stop()
-        # No limpiar ni volver a recortar la captura mostrada.
+        self._freeze_horizontal_history()
+        # No modificar la captura original del archivo ni del procesador.
         self.update_controls_state()
 
 
@@ -312,6 +328,7 @@ class AcquisitionMixin:
                 or not self.acquisition.is_running):
             return
 
+        self._resume_horizontal_view()
         self._reset_processing()
         self.trigger_mode = "Single"
         self.single_mode = True

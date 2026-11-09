@@ -1,3 +1,4 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Punto de entrada público del osciloscopio de dos canales."""
 
 from threading import Lock
@@ -14,6 +15,7 @@ from acquisition.capture_sequence import CaptureSequence
 from exporting.capture_export import CaptureArchive
 from processing.math_processor import MathTraceProcessor
 from trigger.edge_trigger import Edge_Trigger
+from trigger.pulse_width import PulseWidthTrigger
 from trigger.holdoff import TriggerHoldoff
 from gui.controls import OscilloscopeControls
 from gui.oscilloscope_plot import OscilloscopePlot
@@ -26,6 +28,7 @@ from gui.oscilloscope.math_trace import MathTraceMixin
 from gui.oscilloscope.roll import RollMixin
 from gui.oscilloscope.fastact import FastActMixin
 from gui.oscilloscope.controls import ControlsMixin
+from gui.oscilloscope.horizontal import HorizontalMixin
 
 
 class OscilloscopeWidget(
@@ -37,6 +40,7 @@ class OscilloscopeWidget(
     RollMixin,
     FastActMixin,
     ControlsMixin,
+    HorizontalMixin,
     QWidget,
 ):
     acquisition_state_changed = Signal(str)
@@ -74,6 +78,11 @@ class OscilloscopeWidget(
 
         # Posición del disparo respecto del centro, en divisiones.
         self.horizontal_position_divisions = 0.0
+        self.horizontal_reference = "Center"
+        self.horizontal_delay_seconds = 0.0
+        self.horizontal_zoom_factor = 1.0
+        self._frozen_horizontal_data = None
+        self._frozen_horizontal_anchor = None
 
         # Posición vertical de la traza, en divisiones.
         self.vertical_position_divisions = 0.0
@@ -164,6 +173,7 @@ class OscilloscopeWidget(
             blocksize=self.blocksize,
         )
 
+        self.trigger_kind = "edge"
         self.trigger = Edge_Trigger(
             level=self.trigger_level,
             slope=self.trigger_slope,

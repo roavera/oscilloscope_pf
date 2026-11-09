@@ -1,3 +1,4 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Visualización de señales y ajuste gráfico del nivel de trigger."""
 
 import numpy as np
@@ -693,12 +694,8 @@ class OscilloscopePlot(QWidget):
             self.time_per_division * self.horizontal_divisions
         )
 
-        trigger_time = (
-            self.horizontal_position
-            + self.trigger_position * total_time
-        )
-
-        self.trigger_vertical_line.setValue(trigger_time)
+        # t=0 representa el evento. Delay mueve la ventana, no el evento.
+        self.trigger_vertical_line.setValue(0.0)
 
     def _on_horizontal_reference_dragged(self, line):
         """Convierte la posición temporal arrastrada a divisiones."""
@@ -710,9 +707,7 @@ class OscilloscopePlot(QWidget):
         divisions = round((fraction - 0.5) * self.horizontal_divisions, 2)
         # Se limita la línea inmediatamente y el controlador sincroniza
         # la perilla y el recorte de adquisición.
-        self.trigger_vertical_line.setValue(
-            self.horizontal_position + fraction * total_time
-        )
+        self.trigger_vertical_line.setValue(0.0)
         self.horizontal_position_changed.emit(divisions)
 
     def _update_trigger_notice(self):
@@ -780,16 +775,8 @@ class OscilloscopePlot(QWidget):
                     "La posición del disparo debe ser finita."
                 )
 
-            # Posición del disparo en las coordenadas de pantalla.
-            trigger_time = (
-                self.horizontal_position
-                + self.trigger_position * total_time
-            )
-
-            # Alinea el cruce interpolado con la línea vertical.
-            time_axis += (
-                trigger_time - trigger_sample / sample_rate
-            )
+            # El tiempo físico de disparo se mantiene en t=0, aun con Delay.
+            time_axis -= trigger_sample / sample_rate
 
         else:
             # Auto sin disparo: ubica la ventana desde el borde izquierdo.
@@ -908,6 +895,21 @@ class OscilloscopePlot(QWidget):
     # ================================================================
     # ACTUALIZACIÓN DESDE EL CONTROLADOR
     # ================================================================
+
+    def set_horizontal_view(self, acquisition_time_division, reference, delay, zoom):
+        """Cambia únicamente el viewport sin reactivar el procesador/trigger."""
+        base = float(acquisition_time_division)
+        zoom = float(zoom)
+        fraction = float(reference)
+        delay = float(delay)
+        if (not np.isfinite([base, zoom, fraction, delay]).all()
+                or base <= 0 or zoom < 1 or not 0 <= fraction <= 1):
+            raise ValueError("Vista horizontal inválida")
+        self.time_per_division = base / zoom
+        self.trigger_position = fraction
+        span = self.time_per_division * self.horizontal_divisions
+        self.horizontal_position = delay - fraction * span
+        self.update_scales()
 
     def set_time_per_division(self, value):
         value = float(value)

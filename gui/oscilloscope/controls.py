@@ -1,6 +1,12 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Escalas, posiciones, fuente y configuración de disparo de ambos canales."""
 
 import numpy as np
+from trigger.pulse_width import PulseWidthTrigger
+from trigger.edge_trigger import Edge_Trigger
+from trigger.timeout import TimeoutTrigger
+from trigger.runt import RuntTrigger
+from trigger.logic import LogicTrigger
 from trigger.auto_level import estimate_auto_level
 
 
@@ -8,6 +14,9 @@ class ControlsMixin:
     """Colabora sobre el estado único inicializado por OscilloscopeWidget."""
 
     def reset_trigger_controls(self, _checked=False):
+        self.set_trigger_type("edge")
+        self.controls.trigger_controls.reset_pulse_width_settings()
+        self.controls.trigger_controls.reset_advanced_settings()
         self.set_trigger_channel(1)
         self.set_trigger_level(0.0)
         self.set_trigger_slope("Rising")
@@ -16,7 +25,10 @@ class ControlsMixin:
 
 
     def reset_horizontal_controls(self, _checked=False):
+        self.set_horizontal_zoom(1.0)
+        self.set_horizontal_delay(0.0)
         self.set_time_per_division(0.001)
+        self.set_horizontal_reference("Center")
         self.set_horizontal_position(0.0)
 
 
@@ -60,11 +72,15 @@ class ControlsMixin:
         )
 
         self.plot.set_time_per_division(value)
+        self._apply_horizontal_view()
         if self.acquisition_processor.get_mode() == "roll":
             self._reset_roll_history()
         self.controls.set_time_per_division(value)
 
-        self._redraw_last_acquisition()
+        if not self.running and self._frozen_horizontal_data is not None:
+            self._redraw_frozen_horizontal()
+        else:
+            self._redraw_last_acquisition()
         self.update_controls_state()
 
 
@@ -95,12 +111,16 @@ class ControlsMixin:
             self._reset_processing()
         self.trigger.set_position(self.trigger_position)
         self.plot.set_trigger_position(self.trigger_position)
+        self._apply_horizontal_view()
 
         self.controls.set_horizontal_position(
             self.horizontal_position_divisions
         )
 
-        self._redraw_last_acquisition()
+        if not self.running and self._frozen_horizontal_data is not None:
+            self._redraw_frozen_horizontal()
+        else:
+            self._redraw_last_acquisition()
         self.update_controls_state()
 
 
@@ -175,6 +195,91 @@ class ControlsMixin:
             return
         # Actualiza perilla, campo numérico, marcador y detector existente.
         self.set_trigger_level(level)
+
+    def set_trigger_type(self, trigger_type):
+        """Cambia de detector sin alterar niveles, escalas ni Holdoff.
+
+        Edge se guarda aparte para conservar sus ajustes de acondicionamiento.
+        El resto se reconstruye con la configuración del panel correspondiente.
+        """
+        kinds = ("edge", "pulse_width", "timeout", "runt", "logic")
+        if trigger_type not in kinds:
+            raise ValueError("Tipo de trigger no disponible")
+        if trigger_type == "logic" and self.acquisition.channels < 2:
+            self.controls.trigger_controls.set_trigger_type(self.trigger_kind)
+            self.acquisition_error.emit("Logic requiere dos canales de entrada activos")
+            return
+        if trigger_type == self.trigger_kind:
+            return
+        if self.trigger_kind == "edge":
+            self._edge_trigger_saved = self.trigger
+        edge = getattr(self, "_edge_trigger_saved", None)
+        if edge is None:
+            edge = Edge_Trigger(level=self.trigger_level,
+                                slope=self.trigger_slope,
+                                position=self.trigger_position)
+            self._edge_trigger_saved = edge
+        settings = self.controls.trigger_controls
+        common = dict(level=self.trigger_level, slope=self.trigger_slope,
+                      position=self.trigger_position)
+        if trigger_type == "edge":
+            self.trigger = edge
+            self.trigger.set_level(self.trigger_level)
+            self.trigger.set_slope(self.trigger_slope)
+            self.trigger.set_position(self.trigger_position)
+        elif trigger_type == "pulse_width":
+            self.trigger = PulseWidthTrigger(
+                **common, sample_rate=self.sample_rate,
+                hysteresis_fraction=edge.hysteresis_fraction,
+                **settings.pulse_width_settings())
+        elif trigger_type == "timeout":
+            self.trigger = TimeoutTrigger(
+                **common, sample_rate=self.sample_rate,
+                **settings.timeout_settings())
+        elif trigger_type == "runt":
+            self.trigger = RuntTrigger(
+                **common, sample_rate=self.sample_rate,
+                **settings.runt_settings())
+        else:
+            self.trigger = LogicTrigger(**common, **settings.logic_settings())
+        self.trigger_kind = trigger_type
+        self._reset_processing()
+        self.trigger_found = False
+        settings.set_trigger_type(trigger_type)
+        self.update_controls_state()
+
+    def set_pulse_width_settings(self, settings):
+        """Actualiza umbrales sin tocar datos, Volt/div o Time/div."""
+        if self.trigger_kind != "pulse_width":
+            return
+        self.trigger.set_width_settings(**settings)
+        self._reset_processing()
+        self.trigger_found = False
+        self.update_controls_state()
+
+    def set_timeout_settings(self, settings):
+        if self.trigger_kind != "timeout":
+            return
+        self.trigger.set_timeout_settings(**settings)
+        self._reset_processing()
+        self.trigger_found = False
+        self.update_controls_state()
+
+    def set_runt_settings(self, settings):
+        if self.trigger_kind != "runt":
+            return
+        self.trigger.set_runt_settings(**settings)
+        self._reset_processing()
+        self.trigger_found = False
+        self.update_controls_state()
+
+    def set_logic_settings(self, settings):
+        if self.trigger_kind != "logic":
+            return
+        self.trigger.set_logic_settings(**settings)
+        self._reset_processing()
+        self.trigger_found = False
+        self.update_controls_state()
 
     def set_trigger_channel(self, channel):
         if channel not in (1, 2) or channel == self.trigger_channel:

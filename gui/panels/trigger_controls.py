@@ -18,6 +18,11 @@ class TriggerControls(QGroupBox):
     slope_changed = Signal(str)
     mode_changed = Signal(str)
     single_clicked = Signal()
+    type_changed = Signal(str)
+    pulse_width_changed = Signal(dict)
+    timeout_changed = Signal(dict)
+    runt_changed = Signal(dict)
+    logic_changed = Signal(dict)
     auto_level_clicked = Signal()
     holdoff_changed = Signal(float)  # segundos
 
@@ -157,6 +162,10 @@ class TriggerControls(QGroupBox):
 
         self.type_combo = QComboBox()
         self.type_combo.addItem("Flanco", "edge")
+        self.type_combo.addItem("Ancho de pulso", "pulse_width")
+        self.type_combo.addItem("Timeout", "timeout")
+        self.type_combo.addItem("Runt", "runt")
+        self.type_combo.addItem("Logic CH1/CH2", "logic")
         form.addRow("Tipo de disparo:", self.type_combo)
 
         self.mode_combo = QComboBox()
@@ -189,10 +198,154 @@ class TriggerControls(QGroupBox):
         form.addRow("Flanco:", self.slope_combo)
         dialog_layout.addLayout(form)
 
-        note = QLabel(
-            "Tipo disponible: disparo por flanco. "
-            "Holdoff evita aceptar nuevos eventos durante el intervalo configurado."
+        # Configuracion especifica de Pulse Width; no ocupa sitio en la
+        # pantalla principal y no interfiere con el control Holdoff.
+        self.pulse_group = QGroupBox("Ancho de pulso", self.settings_dialog)
+        pulse_form = QFormLayout(self.pulse_group)
+        self.pulse_polarity = QComboBox()
+        self.pulse_polarity.addItem("Alto (HIGH)", "high")
+        self.pulse_polarity.addItem("Bajo (LOW)", "low")
+        pulse_form.addRow("Polaridad:", self.pulse_polarity)
+
+        self.pulse_comparison = QComboBox()
+        self.pulse_comparison.addItem("Mayor que (>)", "greater")
+        self.pulse_comparison.addItem("Menor que (<)", "less")
+        self.pulse_comparison.addItem("Dentro del rango", "within")
+        self.pulse_comparison.addItem("Fuera del rango", "outside")
+        pulse_form.addRow("Condicion:", self.pulse_comparison)
+
+        self.pulse_lower = QDoubleSpinBox()
+        self.pulse_lower.setRange(0.0, 1_000_000.0)
+        self.pulse_lower.setDecimals(2)
+        self.pulse_lower.setSingleStep(10.0)
+        self.pulse_lower.setValue(400.0)
+        self.pulse_lower.setSuffix(" µs")
+        self.pulse_lower.setKeyboardTracking(False)
+        self.pulse_lower.setToolTip("Umbral o limite inferior, expresado en microsegundos")
+        pulse_form.addRow("Ancho A:", self.pulse_lower)
+
+        self.pulse_upper = QDoubleSpinBox()
+        self.pulse_upper.setRange(0.0, 1_000_000.0)
+        self.pulse_upper.setDecimals(2)
+        self.pulse_upper.setSingleStep(10.0)
+        self.pulse_upper.setValue(600.0)
+        self.pulse_upper.setSuffix(" µs")
+        self.pulse_upper.setKeyboardTracking(False)
+        self.pulse_upper.setToolTip("Limite superior para Dentro/Fuera del rango")
+        pulse_form.addRow("Ancho B:", self.pulse_upper)
+
+        pulse_note = QLabel(
+            "El disparo se confirma al FINAL del pulso. "
+            "Resolucion temporal limitada por Fs; "
+            "conviene que los pulsos tengan al menos varias muestras."
         )
+        pulse_note.setWordWrap(True)
+        pulse_form.addRow(pulse_note)
+        dialog_layout.addWidget(self.pulse_group)
+        self.pulse_group.hide()
+
+        self.timeout_group = QGroupBox("Timeout - ausencia de flancos", self.settings_dialog)
+        timeout_form = QFormLayout(self.timeout_group)
+        self.timeout_state = QComboBox()
+        for label, value in (("Alto o bajo", "either"),
+                             ("Solo HIGH", "high"), ("Solo LOW", "low")):
+            self.timeout_state.addItem(label, value)
+        timeout_form.addRow("Estado:", self.timeout_state)
+        self.timeout_duration = QDoubleSpinBox()
+        self.timeout_duration.setRange(0.0, 10_000_000.0)
+        self.timeout_duration.setDecimals(2)
+        self.timeout_duration.setSingleStep(100.0)
+        self.timeout_duration.setValue(1000.0)
+        self.timeout_duration.setSuffix(" µs")
+        self.timeout_duration.setKeyboardTracking(False)
+        timeout_form.addRow("Sin transición:", self.timeout_duration)
+        self.timeout_hysteresis = QDoubleSpinBox()
+        self.timeout_hysteresis.setRange(0.0, 100.0)
+        self.timeout_hysteresis.setDecimals(4)
+        self.timeout_hysteresis.setValue(0.0)
+        self.timeout_hysteresis.setSuffix(" V")
+        self.timeout_hysteresis.setKeyboardTracking(False)
+        timeout_form.addRow("Histéresis:", self.timeout_hysteresis)
+        timeout_note = QLabel("Dispara una vez cuando una entrada queda estable "
+                              "durante el tiempo configurado. Usa el nivel principal.")
+        timeout_note.setWordWrap(True)
+        timeout_form.addRow(timeout_note)
+        dialog_layout.addWidget(self.timeout_group)
+        self.timeout_group.hide()
+
+        self.runt_group = QGroupBox("Runt - pulso incompleto", self.settings_dialog)
+        runt_form = QFormLayout(self.runt_group)
+        self.runt_polarity = QComboBox()
+        self.runt_polarity.addItem("Pulso alto incompleto", "high")
+        self.runt_polarity.addItem("Pulso bajo incompleto", "low")
+        runt_form.addRow("Polaridad:", self.runt_polarity)
+        self.runt_lower = QDoubleSpinBox()
+        self.runt_lower.setRange(-100000.0, 100000.0)
+        self.runt_lower.setDecimals(4)
+        self.runt_lower.setValue(-0.2)
+        self.runt_lower.setSuffix(" V")
+        self.runt_lower.setKeyboardTracking(False)
+        runt_form.addRow("Umbral inferior:", self.runt_lower)
+        self.runt_upper = QDoubleSpinBox()
+        self.runt_upper.setRange(-100000.0, 100000.0)
+        self.runt_upper.setDecimals(4)
+        self.runt_upper.setValue(0.2)
+        self.runt_upper.setSuffix(" V")
+        self.runt_upper.setKeyboardTracking(False)
+        runt_form.addRow("Umbral superior:", self.runt_upper)
+        self.runt_min_width = QDoubleSpinBox()
+        self.runt_min_width.setRange(0.0, 10_000_000.0)
+        self.runt_min_width.setDecimals(2)
+        self.runt_min_width.setValue(0.0)
+        self.runt_min_width.setSuffix(" µs")
+        self.runt_min_width.setKeyboardTracking(False)
+        runt_form.addRow("Duración mínima:", self.runt_min_width)
+        runt_note = QLabel("El pulso debe superar el primer umbral sin alcanzar "
+                           "el segundo, y luego volver al estado original.")
+        runt_note.setWordWrap(True)
+        runt_form.addRow(runt_note)
+        dialog_layout.addWidget(self.runt_group)
+        self.runt_group.hide()
+
+        self.logic_group = QGroupBox("Logic - dos canales", self.settings_dialog)
+        logic_form = QFormLayout(self.logic_group)
+        self.logic_operator = QComboBox()
+        for label, value in (("AND (Y)", "and"), ("OR (O)", "or"),
+                             ("XOR (O excluyente)", "xor")):
+            self.logic_operator.addItem(label, value)
+        logic_form.addRow("Operación:", self.logic_operator)
+        self.logic_ch1_state = QComboBox()
+        self.logic_ch1_state.addItem("HIGH", "high")
+        self.logic_ch1_state.addItem("LOW", "low")
+        self.logic_ch2_state = QComboBox()
+        self.logic_ch2_state.addItem("HIGH", "high")
+        self.logic_ch2_state.addItem("LOW", "low")
+        logic_form.addRow("CH1:", self.logic_ch1_state)
+        logic_form.addRow("CH2:", self.logic_ch2_state)
+        self.logic_ch1_level = QDoubleSpinBox()
+        self.logic_ch1_level.setRange(-100000.0, 100000.0)
+        self.logic_ch1_level.setDecimals(4)
+        self.logic_ch1_level.setSuffix(" V")
+        self.logic_ch1_level.setKeyboardTracking(False)
+        self.logic_ch2_level = QDoubleSpinBox()
+        self.logic_ch2_level.setRange(-100000.0, 100000.0)
+        self.logic_ch2_level.setDecimals(4)
+        self.logic_ch2_level.setSuffix(" V")
+        self.logic_ch2_level.setKeyboardTracking(False)
+        logic_form.addRow("Nivel CH1:", self.logic_ch1_level)
+        logic_form.addRow("Nivel CH2:", self.logic_ch2_level)
+        self.logic_edge = QComboBox()
+        self.logic_edge.addItem("Cuando se cumple", "rising")
+        self.logic_edge.addItem("Cuando deja de cumplirse", "falling")
+        logic_form.addRow("Disparar:", self.logic_edge)
+        logic_note = QLabel("Requiere dos canales activos y sincronizados. "
+                            "Umbrales independientes en voltios calibrados.")
+        logic_note.setWordWrap(True)
+        logic_form.addRow(logic_note)
+        dialog_layout.addWidget(self.logic_group)
+        self.logic_group.hide()
+
+        note = QLabel("Tipos: flanco, ancho de pulso, Timeout, Runt y Logic.")
         note.setWordWrap(True)
         dialog_layout.addWidget(note)
         close_button = QPushButton("Cerrar")
@@ -206,6 +359,23 @@ class TriggerControls(QGroupBox):
         self.level_input.valueChanged.connect(self._emit_level_change)
         self.zero_button.clicked.connect(self._zero_level)
         self.slope_combo.currentIndexChanged.connect(self._emit_slope_change)
+        self.type_combo.currentIndexChanged.connect(self._emit_trigger_type_change)
+        self.pulse_polarity.currentIndexChanged.connect(self._emit_pulse_width_change)
+        self.pulse_comparison.currentIndexChanged.connect(self._emit_pulse_width_change)
+        self.pulse_lower.valueChanged.connect(self._emit_pulse_width_change)
+        self.pulse_upper.valueChanged.connect(self._emit_pulse_width_change)
+        for ctrl in (self.timeout_state, self.timeout_duration, self.timeout_hysteresis):
+            (ctrl.currentIndexChanged if isinstance(ctrl, QComboBox)
+             else ctrl.valueChanged).connect(self._emit_timeout_change)
+        for ctrl in (self.runt_polarity, self.runt_lower,
+                     self.runt_upper, self.runt_min_width):
+            (ctrl.currentIndexChanged if isinstance(ctrl, QComboBox)
+             else ctrl.valueChanged).connect(self._emit_runt_change)
+        for ctrl in (self.logic_operator, self.logic_ch1_state,
+                     self.logic_ch2_state, self.logic_ch1_level,
+                     self.logic_ch2_level, self.logic_edge):
+            (ctrl.currentIndexChanged if isinstance(ctrl, QComboBox)
+             else ctrl.valueChanged).connect(self._emit_logic_change)
         self.holdoff_spin.valueChanged.connect(self._emit_holdoff_change)
         self.mode_combo.currentIndexChanged.connect(self._emit_mode_change)
         self.single_button.clicked.connect(self.single_clicked.emit)
@@ -241,6 +411,142 @@ class TriggerControls(QGroupBox):
             self.holdoff_spin.setValue(float(seconds) * 1000.0)
         finally:
             del blocker
+
+    def timeout_settings(self):
+        return dict(state=self.timeout_state.currentData(),
+                    timeout_us=self.timeout_duration.value(),
+                    hysteresis_volts=self.timeout_hysteresis.value())
+
+    def runt_settings(self):
+        return dict(polarity=self.runt_polarity.currentData(),
+                    lower_volts=self.runt_lower.value(),
+                    upper_volts=self.runt_upper.value(),
+                    min_width_us=self.runt_min_width.value())
+
+    def logic_settings(self):
+        return dict(operator=self.logic_operator.currentData(),
+                    ch1_state=self.logic_ch1_state.currentData(),
+                    ch2_state=self.logic_ch2_state.currentData(),
+                    ch1_level=self.logic_ch1_level.value(),
+                    ch2_level=self.logic_ch2_level.value(),
+                    edge=self.logic_edge.currentData())
+
+    def _emit_timeout_change(self, *_):
+        self.timeout_changed.emit(self.timeout_settings())
+
+    def _emit_runt_change(self, *_):
+        if self.runt_lower.value() >= self.runt_upper.value():
+            # Garantizar umbrales separados antes de actualizar el detector.
+            blocker = QSignalBlocker(self.runt_upper)
+            try:
+                self.runt_upper.setValue(min(self.runt_upper.maximum(),
+                                              self.runt_lower.value() + 0.01))
+            finally:
+                del blocker
+            if self.runt_lower.value() >= self.runt_upper.value():
+                return
+        self.runt_changed.emit(self.runt_settings())
+
+    def _emit_logic_change(self, *_):
+        self.logic_changed.emit(self.logic_settings())
+
+    def reset_advanced_settings(self):
+        defaults = (
+            (self.timeout_state,0), (self.timeout_duration,1000.0),
+            (self.timeout_hysteresis,0.0), (self.runt_polarity,0),
+            (self.runt_lower,-0.2), (self.runt_upper,0.2),
+            (self.runt_min_width,0.0), (self.logic_operator,0),
+            (self.logic_ch1_state,0), (self.logic_ch2_state,0),
+            (self.logic_ch1_level,0.0), (self.logic_ch2_level,0.0),
+            (self.logic_edge,0),
+        )
+        for ctrl, value in defaults:
+            blocker = QSignalBlocker(ctrl)
+            try:
+                if isinstance(ctrl, QComboBox):
+                    ctrl.setCurrentIndex(value)
+                else:
+                    ctrl.setValue(value)
+            finally:
+                del blocker
+        self._update_pulse_width_ui()
+
+    def set_available_channels(self, channels):
+        two = int(channels) == 2
+        index = self.type_combo.findData("logic")
+        self.type_combo.model().item(index).setEnabled(two)
+        self.source_combo.model().item(1).setEnabled(two)
+        if not two and self.source_combo.currentData() == 2:
+            blocker = QSignalBlocker(self.source_combo)
+            try:
+                self.source_combo.setCurrentIndex(0)
+            finally:
+                del blocker
+        if not two and self.type_combo.currentData() == "logic":
+            self.set_trigger_type("edge")
+
+    def _update_pulse_width_ui(self):
+        kind = self.type_combo.currentData()
+        pulse = kind == "pulse_width"
+        self.pulse_group.setVisible(pulse)
+        self.timeout_group.setVisible(kind == "timeout")
+        self.runt_group.setVisible(kind == "runt")
+        self.logic_group.setVisible(kind == "logic")
+        self.slope_combo.setEnabled(kind == "edge")
+        self.level_knob.setEnabled(kind in ("edge", "pulse_width", "timeout"))
+        self.level_input.setEnabled(kind in ("edge", "pulse_width", "timeout"))
+        self.auto_level_button.setEnabled(kind in ("edge", "pulse_width", "timeout"))
+        self.pulse_upper.setEnabled(
+            self.pulse_comparison.currentData() in ("within", "outside")
+        )
+
+    def _emit_trigger_type_change(self, _index):
+        self._update_pulse_width_ui()
+        selected = self.type_combo.currentData()
+        if selected is not None:
+            self.type_changed.emit(selected)
+
+    def _emit_pulse_width_change(self, *_):
+        # Impedir un rango invertido antes de notificar al detector.
+        minimum = self.pulse_lower.value()
+        if self.pulse_upper.value() < minimum:
+            blocker = QSignalBlocker(self.pulse_upper)
+            try:
+                self.pulse_upper.setValue(minimum)
+            finally:
+                del blocker
+        self._update_pulse_width_ui()
+        self.pulse_width_changed.emit(self.pulse_width_settings())
+
+    def pulse_width_settings(self):
+        return {
+            "polarity": self.pulse_polarity.currentData(),
+            "comparison": self.pulse_comparison.currentData(),
+            "lower_us": self.pulse_lower.value(),
+            "upper_us": self.pulse_upper.value(),
+        }
+
+    def set_trigger_type(self, kind):
+        self._select(self.type_combo, kind, kind)
+        self._update_pulse_width_ui()
+
+    def reset_pulse_width_settings(self):
+        controls = (
+            (self.pulse_polarity, 0),
+            (self.pulse_comparison, 0),
+            (self.pulse_lower, 400.0),
+            (self.pulse_upper, 600.0),
+        )
+        for control, value in controls:
+            blocker = QSignalBlocker(control)
+            try:
+                if isinstance(control, QComboBox):
+                    control.setCurrentIndex(value)
+                else:
+                    control.setValue(value)
+            finally:
+                del blocker
+        self._update_pulse_width_ui()
 
     def _emit_slope_change(self, _index):
         value = self.slope_combo.currentData()

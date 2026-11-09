@@ -47,7 +47,12 @@ class CaptureSequence:
             return
         before = int(count * trigger.position)
         # La misma referencia y banda de histéresis para los cinco modos.
-        events = trigger.crossings(data[:, channel - 1])
+        # Logic procesa los dos canales; Timeout usa indices absolutos para
+        # conservar estado entre bloques USB y ventanas solapadas.
+        if hasattr(trigger, "set_window_start"):
+            trigger.set_window_start(first_sample)
+        source = data if getattr(trigger, "uses_both_channels", False) else data[:, channel - 1]
+        events = trigger.crossings(source)
         low = max(before, self._minimum_trigger - first_sample,
                   self._minimum_start - first_sample + before)
         high = min(len(data) - count + before - 1, len(data) - 2)

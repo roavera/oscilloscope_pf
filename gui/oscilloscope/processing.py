@@ -1,3 +1,4 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Selección de capturas, modos de adquisición y archivo de muestras originales."""
 
 from time import monotonic
@@ -23,6 +24,8 @@ class ProcessingMixin:
             if use_buffered:
                 minimum -= self.buffer.valid_samples
         self.capture_sequence.reset(minimum_trigger=minimum)
+        if hasattr(self.trigger, "reset_stream"):
+            self.trigger.reset_stream()
         self.trigger_holdoff.reset()
         self._last_sampling_trigger_id = minimum - 1
         self._last_snapshot_end = minimum
@@ -70,6 +73,7 @@ class ProcessingMixin:
             raise ValueError(f"Modo no disponible: {mode}")
         previous = self.acquisition_processor.get_mode()
         if mode != previous:
+            self._clear_frozen_horizontal()
             if mode == "roll":
                 self._pre_roll_time_per_division = self.time_per_division
             self.acquisition_processor.set_mode(mode)
@@ -186,6 +190,13 @@ class ProcessingMixin:
         if len(data) < self.display_samples:
             return
 
+        # Logic no debe producir disparos si CH2 esta desactivado.
+        if (getattr(self.trigger, "uses_both_channels", False)
+                and not all(self.acquisition.active_channels)):
+            self.trigger_found = False
+            self.update_controls_state()
+            return
+
         if mode == "fastact":
             self._process_fastact_captures(data, first_sample, raw_data=raw_data)
             return
@@ -203,8 +214,14 @@ class ProcessingMixin:
         minimum_absolute = float(self._last_sampling_trigger_id + 1)
         if first_allowed is not None:
             minimum_absolute = max(minimum_absolute, first_allowed)
+        # Logic requiere ambas entradas, y Timeout el comienzo de
+        # esta ventana expresado en indices absolutos.
+        if hasattr(self.trigger, "set_window_start"):
+            self.trigger.set_window_start(first_sample)
+        trigger_input = (data if getattr(self.trigger, "uses_both_channels", False)
+                         else data[:, self.trigger_channel - 1])
         trigger_index = self.trigger.find(
-            data[:, self.trigger_channel - 1],
+            trigger_input,
             self.display_samples,
             minimum_index=minimum_absolute - first_sample,
         )
@@ -293,6 +310,7 @@ class ProcessingMixin:
             if self.trigger_mode == "Single":
                 self.running = False
                 self.display_timer.stop()
+                self._freeze_horizontal_history()
 
         self.update_controls_state()
 

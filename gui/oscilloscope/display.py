@@ -1,3 +1,4 @@
+# CONTROL_HORIZONTAL_COMPLETO_V1
 """Representación y recorte de capturas; estado mostrado en los controles."""
 
 from copy import deepcopy
@@ -168,6 +169,9 @@ class DisplayMixin:
 
 
     def update_controls_state(self):
+        self.controls.horizontal_controls.set_navigation_enabled(
+            not self.running and self.acquisition_processor.get_mode() not in ("roll", "fastact")
+        )
         self.export_controls.refresh()
         self._update_math_status()
         if self._connection_state == "connecting":
