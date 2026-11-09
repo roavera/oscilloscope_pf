@@ -3,7 +3,7 @@
 from PySide6.QtCore import Signal, QSettings
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy, QPushButton,
-    QButtonGroup, QStackedWidget, QLabel, QFrame,
+    QButtonGroup, QStackedWidget, QLabel, QFrame, QScrollArea,
 )
 from PySide6.QtCore import Qt
 
@@ -263,7 +263,25 @@ class OscilloscopeControls(QWidget):
         self.navigation_buttons["controls"].setChecked(True)
         self.navigation_buttons["simulator"].setVisible(False)
         self.pages.setCurrentIndex(0)
-        layout.addWidget(self.pages, 1)
+        # CONTROL_PAGES_SCROLL_V1: solo la página de controles es desplazable.
+        # Navegación y RUN/STOP permanecen fijos; el display no queda recortado
+        # cuando se expande Inspección temporal en un monitor de poca altura.
+        self.pages_scroll = QScrollArea(self)
+        self.pages_scroll.setObjectName("control_pages_scroll")
+        self.pages_scroll.setWidgetResizable(True)
+        self.pages_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.pages_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.pages_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.pages_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.pages_scroll.setMinimumHeight(120)
+        self.pages_scroll.setWidget(self.pages)
+        layout.addWidget(self.pages_scroll, 1)
         self.pages.currentChanged.connect(self._update_page_size)
         self._update_page_size(self.pages.currentIndex())
 

@@ -6,11 +6,12 @@ import pyqtgraph as pg
 
 from PySide6.QtCore import Signal, QRectF, Qt, QPointF
 from PySide6.QtGui import QColor, QBrush, QPen, QPolygonF
-from PySide6.QtWidgets import QGraphicsObject, QWidget, QVBoxLayout
+from PySide6.QtWidgets import QGraphicsObject, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy
 
 from .theme.colors import PLOT_COLORS
 from .oscilloscope_grid import OscilloscopeGrid
 from .display_interpolation import MODES, interpolate_display
+from .timebase_readout import format_timebase_readout
 
 class ChannelMarker(QGraphicsObject):
     """Marcador de cero de cada canal, arrastrable en divisiones."""
@@ -118,6 +119,11 @@ class OscilloscopePlot(QWidget):
         self.vertical_divisions = vertical_divisions
 
         self.time_per_division = float(time_per_division)
+        # Time/div adquirido y Time/div visible con Zoom no son equivalentes.
+        self._readout_base_seconds = self.time_per_division
+        self._readout_zoom = 1.0
+        self._readout_delay = 0.0
+        self._readout_vernier = False
         self.volts_per_division = float(volts_per_division)
 
         self.horizontal_position = float(horizontal_position)
@@ -250,6 +256,7 @@ class OscilloscopePlot(QWidget):
         self.plot_widget.update()
         
         self.grid.set_theme(theme_name)
+        self._style_timebase_readout()
         self._refresh_channel_curves()
         self._refresh_math()
 
@@ -273,9 +280,34 @@ class OscilloscopePlot(QWidget):
     def create_interface(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)  # Barra de escala pegada a la base del display.
 
         self.plot_widget = pg.PlotWidget()
-        layout.addWidget(self.plot_widget)
+        layout.addWidget(self.plot_widget, 1)
+
+        # TIMEBASE_READOUT_V1: Time/div siempre visible a la derecha.
+        self.timebase_strip = QWidget(self)
+        self.timebase_strip.setObjectName("timebase_strip")
+        strip_layout = QHBoxLayout(self.timebase_strip)
+        strip_layout.setContentsMargins(10, 0, 10, 0)
+        strip_layout.setSpacing(10)
+        self.timebase_details = QLabel(self.timebase_strip)
+        self.timebase_details.setObjectName("timebase_details")
+        self.timebase_details.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.timebase_details.setMinimumWidth(0)
+        self.timebase_details.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        strip_layout.addWidget(self.timebase_details, 1)
+        self.timebase_readout = QLabel(self.timebase_strip)
+        self.timebase_readout.setObjectName("timebase_readout")
+        self.timebase_readout.setAccessibleName("Escala de tiempo del osciloscopio")
+        self.timebase_readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.timebase_readout.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.timebase_readout.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        strip_layout.addWidget(self.timebase_readout, 0)
+        self.timebase_strip.setFixedHeight(27)
+        layout.addWidget(self.timebase_strip, 0)
+        self._style_timebase_readout()
+        self._update_timebase_readout()
 
         self.plot_widget.setLabel(
             "left",
@@ -656,6 +688,41 @@ class OscilloscopePlot(QWidget):
         self.channel_legend.setPos(self.horizontal_position, self.vertical_divisions / 2)
         self._refresh_cursors()
 
+    def _style_timebase_readout(self):
+        """Mantiene contraste correcto en los temas día/noche."""
+        if self.display_theme == "light":
+            background, foreground, border = "#EAF0F7", "#243448", "#CAD5E3"
+        else:
+            background, foreground, border = "#111C2B", "#E5EEF9", "#34475D"
+        self.timebase_strip.setStyleSheet(
+            f"QWidget#timebase_strip {{ background: {background}; "
+            f"border-top: 1px solid {border}; }} "
+            f"QLabel#timebase_readout {{ color: {foreground}; "
+            "font-family: Consolas, 'DejaVu Sans Mono', monospace; "
+            "font-size: 11px; font-weight: 700; }} "
+            f"QLabel#timebase_details {{ color: {foreground}; "
+            "font-family: Consolas, 'DejaVu Sans Mono', monospace; "
+            "font-size: 10px; }}"
+        )
+
+    def _update_timebase_readout(self):
+        """Siempre informa Time/div REAL y, si hay Zoom, Time/div visible."""
+        full = format_timebase_readout(
+            self._readout_base_seconds,
+            self._readout_zoom,
+            self._readout_delay,
+            vernier=self._readout_vernier,
+        )
+        parts = full.split("   ·   ", 1)
+        # La escala adquirida queda anclada a la derecha aun con poco ancho.
+        self.timebase_readout.setText(parts[0])
+        self.timebase_details.setText(parts[1] if len(parts) == 2 else "")
+        self.timebase_strip.setToolTip(full)
+
+    def set_timebase_vernier_enabled(self, enabled):
+        self._readout_vernier = bool(enabled)
+        self._update_timebase_readout()
+
     def update_scales(self):
         total_time = (
             self.time_per_division * self.horizontal_divisions
@@ -909,6 +976,10 @@ class OscilloscopePlot(QWidget):
         self.trigger_position = fraction
         span = self.time_per_division * self.horizontal_divisions
         self.horizontal_position = delay - fraction * span
+        self._readout_base_seconds = base
+        self._readout_zoom = zoom
+        self._readout_delay = delay
+        self._update_timebase_readout()
         self.update_scales()
 
     def set_time_per_division(self, value):
@@ -920,6 +991,8 @@ class OscilloscopePlot(QWidget):
             )
 
         self.time_per_division = value
+        self._readout_base_seconds = value
+        self._update_timebase_readout()
         self.update_scales()
 
     def set_volts_per_division(self, value):

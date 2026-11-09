@@ -9,7 +9,7 @@ class InterfaceMixin:
     """Colabora sobre el estado único inicializado por OscilloscopeWidget."""
 
     def create_interface(self):
-        """Display y panel lateral fijo, sin área de desplazamiento."""
+        """Display completo y panel lateral de altura adaptable."""
         self._layout_settings = QSettings("OsciloscopioPF", "Osciloscopio")
 
         layout = QHBoxLayout(self)
@@ -26,22 +26,36 @@ class InterfaceMixin:
         # QWidget común: todos los controles de la página quedan en pantalla.
         # Se conserva el nombre del atributo por compatibilidad.
         self.controls_scroll = QWidget(self.splitter)
-        self.controls_scroll.setMinimumWidth(400)
+        # PANEL_HERRAMIENTAS_COMPLETO_V1
+        # Una página de dos columnas no cabe en los ~400 px que podían quedar
+        # guardados en QSettings: se recortaban Horizontal y CH2 a la derecha.
+        # El mínimo se calcula a partir de las cuatro secciones, sin usar
+        # tamaños rígidos de píxeles para widgets individuales.
+        groups = (
+            self.controls.trigger_controls,
+            self.controls.horizontal_controls,
+            self.controls.ch1_controls,
+            self.controls.ch2_controls,
+        )
+        min_column = max(group.minimumSizeHint().width() for group in groups)
+        # 40 px cubren separación de columnas, márgenes y scrollbar vertical.
+        self._sidebar_min_width = max(540, 2 * min_column + 40)
+        self.controls_scroll.setMinimumWidth(self._sidebar_min_width)
         self.controls_scroll.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
         right_layout = QVBoxLayout(self.controls_scroll)
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(0)
-        right_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        right_layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
         right_layout.addWidget(self.controls)
         self.splitter.addWidget(self.controls_scroll)
 
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         layout.addWidget(self.splitter)
-        # El mínimo natural impide reducir la ventana hasta recortar controles.
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        # CONTROL_PAGES_SCROLL_V1: permitir reducir altura sin esconder eje X ni Time/div.
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
 
         self._restoring_splitter = True
         self.splitter.splitterMoved.connect(self._save_splitter_width)
@@ -51,12 +65,16 @@ class InterfaceMixin:
     def _restore_splitter_width(self):
         """Recupera el ancho lateral sin reducir demasiado el gráfico."""
         width = self._layout_settings.value(
-            "layout/sidebar_width_v2", 460, type=int
+            "layout/sidebar_width_v2", 560, type=int
         )
-        width = max(400, min(600, width))
+        # Respetar el mínimo aun si el usuario tenía guardados 400 px.
+        min_width = self.controls_scroll.minimumWidth()
+        width = max(min_width, min(700, width))
         available = max(0, self.splitter.width() - self.splitter.handleWidth())
-        width = min(width, max(400, available - 320))
-        self.splitter.setSizes([max(320, available - width), width])
+        plot_min = self.plot.minimumWidth()
+        if available >= min_width + plot_min:
+            width = min(width, available - plot_min)
+        self.splitter.setSizes([max(plot_min, available - width), width])
         self._restoring_splitter = False
 
 
@@ -107,6 +125,8 @@ class InterfaceMixin:
         nav.reference_changed.connect(self.set_horizontal_reference)
         nav.delay_changed.connect(self.set_horizontal_delay)
         nav.zoom_changed.connect(self.set_horizontal_zoom)
+        # Actualiza el indicador si se enciende/apaga Fino sin cambiar escala.
+        nav.vernier_checkbox.toggled.connect(self.plot.set_timebase_vernier_enabled)
         self.controls.time_per_division_changed.connect(
             self.set_time_per_division
         )

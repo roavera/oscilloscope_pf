@@ -17,6 +17,10 @@ class HorizontalMixin:
             self.horizontal_delay_seconds,
             self.horizontal_zoom_factor,
         )
+        # Incluso al desactivar Fino desde la perilla con señales bloqueadas.
+        self.plot.set_timebase_vernier_enabled(
+            self.controls.horizontal_controls.vernier_checkbox.isChecked()
+        )
         if not self.running:
             self._redraw_frozen_horizontal()
 
