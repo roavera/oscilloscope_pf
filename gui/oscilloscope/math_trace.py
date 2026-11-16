@@ -12,18 +12,28 @@ class MathTraceMixin:
     """Colabora sobre el estado único inicializado por OscilloscopeWidget."""
 
     def _math_reference_scale(self, source_a=1, source_b=2, operation="add"):
+        """Obtiene una escala coherente con los canales que alimentan MATH."""
         scales = getattr(self.plot, "channel_scales", {})
         scale_a = float(scales.get(int(source_a), self.volts_per_division))
         scale_b = float(scales.get(int(source_b), self.ch2_volts_per_division))
+        digital = {"greater", "less", "greater_equal", "less_equal", "equal", "and", "or", "xor"}
+        if operation in digital:
+            return 1.0
         unary = {"abs", "sqrt", "log10", "ln", "exp", "integrate", "derivative"}
-        return scale_a if operation in unary else max(scale_a, scale_b)
+        if operation in unary:
+            return scale_a
+        # Para operaciones entre canales se usa la mayor escala: conserva la
+        # legibilidad aun cuando CH1 y CH2 tengan sensibilidades distintas.
+        return max(scale_a, scale_b)
 
     def sync_math_scale(self):
+        """Sincroniza la escala MATH después de cambiar CH1 o CH2."""
         config = self.math_processor.math.config
-        scale = self._math_reference_scale(config.source_a, config.source_b, config.operation)
+        scale = self._math_reference_scale(
+            config.source_a, config.source_b, config.operation
+        )
         self.controls.math_controls.set_scale_value(scale)
         self.plot.set_math_settings(scale=scale)
-
 
     def reset_math_controls(self, _checked=False):
         """Defaults de MATH; los canales y sus acumulaciones se conservan."""
@@ -36,7 +46,9 @@ class MathTraceMixin:
             panel.visible_checkbox.setChecked(False)
         finally:
             del blockers
-        self.plot.set_math_settings(scale=self._math_reference_scale(1, 2, "add"), position=0.0)
+        self.plot.set_math_settings(
+            scale=self._math_reference_scale(1, 2, "add"), position=0.0
+        )
         self.set_math_configuration("add", 1, 2)
         self.set_math_visible(False)
 
@@ -53,6 +65,12 @@ class MathTraceMixin:
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
+        digital = operation in {
+            "greater", "less", "greater_equal", "less_equal", "equal",
+            "and", "or", "xor",
+        }
+        self.controls.math_controls.set_digital_mode(digital)
+        self.plot.set_math_settings(digital=digital)
         self.sync_math_scale()
         if (self.acquisition_processor.get_mode() == "fastact" and
                 self.last_acquisition is not None):

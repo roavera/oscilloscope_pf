@@ -99,6 +99,12 @@ class InterfaceMixin:
         math_controls.visibility_changed.connect(self.set_math_visible)
         math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
         math_controls.position_changed.connect(lambda value: self.plot.set_math_settings(position=value))
+        self.plot.math_position_changed.connect(
+            lambda value: (
+                self.controls.math_controls.position_input.setValue(value),
+                self.plot.set_math_settings(position=value),
+            )
+        )
         self.controls.simulator_settings_changed.connect(
             self._on_simulator_settings_changed
         )

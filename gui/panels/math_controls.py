@@ -99,6 +99,14 @@ class MathControls(QGroupBox):
             value = self.scale_combo.itemData(index)
             self.scale_combo.setItemText(index, f"{value:g} {unit}/div")
 
+    def set_digital_mode(self, digital):
+        if digital:
+            self.units_label.setText(
+                "Resultado lógico: 0 = bajo · 1 = alto"
+            )
+        else:
+            self.units_label.setText("Escala: unidades de entrada")
+
     def set_scale_value(self, value):
         value = float(value)
         for index in range(self.scale_combo.count()):
