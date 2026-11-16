@@ -111,6 +111,9 @@ class InterfaceMixin:
         self.cursor_controls.labels_visible_changed.connect(self.plot.set_cursor_labels_visible)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
         self.controls.ch2_controls.volts_per_division_changed.connect(self.set_ch2_volts_per_division)
+        self.controls.ch2_controls.volts_per_division_changed.connect(
+            lambda _value: self.sync_math_scale()
+        )
         self.controls.ch2_controls.position_changed.connect(self.set_ch2_position)
         self.plot.ch2_position_changed.connect(self.set_ch2_position)
         for ch, panel in ((1, self.controls.ch1_controls), (2, self.controls.ch2_controls)):
@@ -148,6 +151,9 @@ class InterfaceMixin:
         # Control vertical.
         self.controls.volts_per_division_changed.connect(
             self.set_volts_per_division
+        )
+        self.controls.volts_per_division_changed.connect(
+            lambda _value: self.sync_math_scale()
         )
 
         self.controls.vertical_position_changed.connect(

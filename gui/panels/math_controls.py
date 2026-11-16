@@ -22,14 +22,22 @@ class MathControls(QGroupBox):
         layout.addWidget(self.visible_checkbox)
         form = QFormLayout()
         self.operation_combo = QComboBox()
-        self.operation_combo.addItem("Suma: A + B", "add")
-        self.operation_combo.addItem("Resta: A − B", "subtract")
+        self.category_combo = QComboBox()
+        self._operation_groups = {
+            "Aritméticas": (("Suma: A + B", "add"), ("Resta: A − B", "subtract"), ("Multiplicación: A × B", "multiply"), ("División: A ÷ B", "divide")),
+            "Cálculo": (("Integración: ∫ A dt", "integrate"), ("Derivación: dA/dt", "derivative")),
+            "Funciones": (("Valor absoluto: |A|", "abs"), ("Raíz cuadrada: √A", "sqrt"), ("Logaritmo decimal: log10(A)", "log10"), ("Logaritmo natural: ln(A)", "ln"), ("Exponencial: exp(A)", "exp")),
+            "Comparaciones": (("Mayor que: A > B", "greater"), ("Menor que: A < B", "less"), ("Mayor o igual: A ≥ B", "greater_equal"), ("Menor o igual: A ≤ B", "less_equal"), ("Igual: A = B", "equal")),
+            "Lógicas": (("AND", "and"), ("OR", "or"), ("XOR", "xor")),
+        }
+        self.category_combo.addItems(self._operation_groups)
         self.source_a_combo = QComboBox()
         self.source_b_combo = QComboBox()
         for combo in (self.source_a_combo, self.source_b_combo):
             combo.addItem("CH1", 1)
             combo.addItem("CH2", 2)
         self.source_b_combo.setCurrentIndex(1)
+        form.addRow("Grupo:", self.category_combo)
         form.addRow("Operación:", self.operation_combo)
         form.addRow("Fuente A:", self.source_a_combo)
         form.addRow("Fuente B:", self.source_b_combo)
@@ -52,20 +60,61 @@ class MathControls(QGroupBox):
         self.formula_label = QLabel("MATH = CH1 + CH2")
         self.formula_label.setStyleSheet("color:#c993ff;font-weight:600;")
         layout.addWidget(self.formula_label)
-        note = QLabel("Salida en unidades de entrada (u.a.). Las muestras USB todavía no están calibradas en voltios.")
+        self.units_label = QLabel("Escala: unidades de entrada")
+        self.units_label.setStyleSheet("color:#a8b5c8;font-weight:600;")
+        layout.addWidget(self.units_label)
+        note = QLabel("A/B son canales de entrada. Las funciones unarias utilizan solamente A.")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.status_label = QLabel("MATH oculta")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
         self.visible_checkbox.toggled.connect(self.visibility_changed.emit)
+        self.category_combo.currentIndexChanged.connect(self._on_category_changed)
         self.scale_combo.currentIndexChanged.connect(
             lambda _index: self.scale_changed.emit(float(self.scale_combo.currentData())))
         self.position_input.valueChanged.connect(self.position_changed.emit)
         for combo in (self.operation_combo, self.source_a_combo, self.source_b_combo):
             combo.currentIndexChanged.connect(self._emit_configuration)
+        self._reload_operations()
 
-    def _emit_configuration(self, _index):
+    def _reload_operations(self, *_):
+        current = self.operation_combo.currentData()
+        self.operation_combo.blockSignals(True)
+        self.operation_combo.clear()
+        for label, value in self._operation_groups[self.category_combo.currentText()]:
+            self.operation_combo.addItem(label, value)
+        index = self.operation_combo.findData(current)
+        self.operation_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.operation_combo.blockSignals(False)
+
+    def _on_category_changed(self, *_):
+        self._reload_operations()
+        self._emit_configuration()
+
+    def set_units(self, label, calibrated):
+        unit = "V" if calibrated else "u.a."
+        self.units_label.setText(f"Escala: {label} · {unit}/div")
+        for index in range(self.scale_combo.count()):
+            value = self.scale_combo.itemData(index)
+            self.scale_combo.setItemText(index, f"{value:g} {unit}/div")
+
+    def set_scale_value(self, value):
+        value = float(value)
+        for index in range(self.scale_combo.count()):
+            item_value = float(self.scale_combo.itemData(index))
+            if abs(item_value - value) <= max(1e-9, abs(value) * 1e-6):
+                blocker = QSignalBlocker(self.scale_combo)
+                self.scale_combo.setCurrentIndex(index)
+                del blocker
+                return
+        unit = getattr(self, "_unit_suffix", "u.a.")
+        blocker = QSignalBlocker(self.scale_combo)
+        self.scale_combo.addItem(f"{value:g} {unit}/div", value)
+        self.scale_combo.setCurrentIndex(self.scale_combo.count() - 1)
+        del blocker
+
+    def _emit_configuration(self, _index=None):
         self.configuration_changed.emit(
             self.operation_combo.currentData(), self.source_a_combo.currentData(),
             self.source_b_combo.currentData(),
@@ -81,5 +130,25 @@ class MathControls(QGroupBox):
                 combo.setCurrentIndex(combo.findData(value))
         finally:
             del blockers
-        sign = "+" if config.operation == "add" else "−"
-        self.formula_label.setText(f"MATH = CH{config.source_a} {sign} CH{config.source_b}")
+        self.formula_label.setText(f"MATH = {self._expression(config)}")
+        category = next((name for name, values in self._operation_groups.items()
+                         if any(value == config.operation for _, value in values)), None)
+        if category:
+            self.category_combo.blockSignals(True)
+            self.category_combo.setCurrentText(category)
+            self.category_combo.blockSignals(False)
+            self._reload_operations()
+            blocker = QSignalBlocker(self.operation_combo)
+            self.operation_combo.setCurrentIndex(self.operation_combo.findData(config.operation))
+            del blocker
+
+    @staticmethod
+    def _expression(config):
+        labels = {"add": "+", "subtract": "−", "multiply": "×", "divide": "÷",
+                  "greater": ">", "less": "<", "greater_equal": "≥",
+                  "less_equal": "≤", "equal": "=", "and": "AND", "or": "OR", "xor": "XOR"}
+        if config.operation in labels:
+            return f"CH{config.source_a} {labels[config.operation]} CH{config.source_b}"
+        names = {"integrate": "∫(CH%d) dt", "derivative": "d(CH%d)/dt", "abs": "abs(CH%d)",
+                 "sqrt": "√CH%d", "log10": "log10(CH%d)", "ln": "ln(CH%d)", "exp": "exp(CH%d)"}
+        return names[config.operation] % config.source_a
