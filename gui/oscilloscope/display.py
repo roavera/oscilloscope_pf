@@ -29,6 +29,13 @@ class DisplayMixin:
             )
         else:
             self._render_acquisition(result, trigger_sample)
+            self._autostore_add(
+                self.last_acquisition,
+                self.sample_rate / self._last_high_resolution_factor,
+                None if trigger_sample is None else (
+                    trigger_sample - (self._last_high_resolution_factor - 1) / 2
+                ) / self._last_high_resolution_factor,
+            )
         self._render_math(self._pending_math_result, trigger_sample)
         self.capture_archive.publish()
         self.export_controls.refresh()

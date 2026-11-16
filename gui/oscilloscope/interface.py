@@ -94,11 +94,17 @@ class InterfaceMixin:
         resets["ch1"].clicked.connect(lambda _checked=False: self.reset_vertical_controls(1))
         resets["ch2"].clicked.connect(lambda _checked=False: self.reset_vertical_controls(2))
         resets["math"].clicked.connect(self.reset_math_controls)
+        self.controls.factory_reset_requested.connect(self.reset_factory_controls)
+        self.controls.autostore_toggled.connect(self.set_autostore_enabled)
+        self.controls.erase_requested.connect(self.erase_autostore)
         math_controls = self.controls.math_controls
         math_controls.configuration_changed.connect(self.set_math_configuration)
         math_controls.visibility_changed.connect(self.set_math_visible)
         math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
         math_controls.position_changed.connect(lambda value: self.plot.set_math_settings(position=value))
+        self.controls.filter_controls.configuration_changed.connect(
+            self.set_filter_configuration
+        )
         self.plot.math_position_changed.connect(
             lambda value: (
                 self.controls.math_controls.position_input.setValue(value),

@@ -6,6 +6,7 @@ from PySide6.QtCore import QSignalBlocker
 from acquisition.modes.envelope import EnvelopeResult
 from acquisition.modes.peak_detect import PeakDetectResult
 from processing.math_processor import MathTraceProcessor
+from config.defaults import FACTORY_DEFAULTS
 
 
 class MathTraceMixin:
@@ -42,12 +43,14 @@ class MathTraceMixin:
         blockers = [QSignalBlocker(widget) for widget in widgets]
         try:
             panel.set_scale_value(self._math_reference_scale(1, 2, "add"))
-            panel.position_input.setValue(0.0)
+            panel.position_input.setValue(FACTORY_DEFAULTS["math_position"])
             panel.visible_checkbox.setChecked(False)
         finally:
             del blockers
         self.plot.set_math_settings(
-            scale=self._math_reference_scale(1, 2, "add"), position=0.0
+            scale=self._math_reference_scale(1, 2, "add"),
+            position=FACTORY_DEFAULTS["math_position"],
+            visible=FACTORY_DEFAULTS["math_visible"],
         )
         self.set_math_configuration("add", 1, 2)
         self.set_math_visible(False)

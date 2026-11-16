@@ -14,6 +14,7 @@ from acquisition.acquisition_processor import AcquisitionProcessor
 from acquisition.capture_sequence import CaptureSequence
 from exporting.capture_export import CaptureArchive
 from processing.math_processor import MathTraceProcessor
+from processing.filters import FilterConfig
 from trigger.edge_trigger import Edge_Trigger
 from trigger.pulse_width import PulseWidthTrigger
 from trigger.holdoff import TriggerHoldoff
@@ -154,6 +155,7 @@ class OscilloscopeWidget(
         self.acquisition_processor = AcquisitionProcessor()
         self.acquisition_processor.set_mode("sampling")
         self.math_processor = MathTraceProcessor(self.acquisition_processor.get_config())
+        self.filter_config = FilterConfig()
         self.last_math = None
         self._pending_math_result = None
         self._last_math_reference = None

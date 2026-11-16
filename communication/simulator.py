@@ -151,10 +151,18 @@ class FakeBlackPill:
             1000.0,
             1000.0,
         ]
+        self.freq2 = [
+            3000.0,
+            1500.0,
+        ]
 
         self.amp = [
             50,
             50,
+        ]
+        self.amp2 = [
+            25,
+            25,
         ]
 
         self.on = [
@@ -232,6 +240,10 @@ class FakeBlackPill:
         # ---------------------------------------------------------------------
 
         self._phase = [
+            0.0,
+            0.0,
+        ]
+        self._phase2 = [
             0.0,
             0.0,
         ]
@@ -740,6 +752,12 @@ class FakeBlackPill:
 
         sine = np.sin(phase)
 
+        if self.wave[ch] == "two_tone":
+            dphi2 = 2.0 * math.pi * self.freq2[ch] / self.fs
+            phase2 = self._phase2[ch] + dphi2 * np.arange(n)
+            self._phase2[ch] = (self._phase2[ch] + dphi2 * n) % (2.0 * math.pi)
+            return np.sin(phase) + (self.amp2[ch] / max(self.amp[ch], 1e-9)) * np.sin(phase2)
+
         # ---------------------------------------------------------------------
         # Cuadrada
         # ---------------------------------------------------------------------
@@ -796,6 +814,10 @@ class FakeBlackPill:
                 * self.freq[ch]
                 / self.fs
                 * n
+            ) % (2.0 * math.pi)
+            self._phase2[ch] = (
+                self._phase2[ch]
+                + 2.0 * math.pi * self.freq2[ch] / self.fs * n
             ) % (2.0 * math.pi)
 
             duration = self.chirp[ch][2]

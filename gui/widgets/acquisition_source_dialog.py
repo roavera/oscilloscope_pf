@@ -28,10 +28,13 @@ class SimulatorChannelForm(QGroupBox):
         self.waveform.addItem("Senoidal", "sine")
         self.waveform.addItem("Cuadrada", "square")
         self.waveform.addItem("Triangular", "triangle")
+        self.waveform.addItem("Dos tonos", "two_tone")
 
         self.frequency = self._spin(1.0, 20_000.0, 1000.0 if number == 1 else 500.0,
                                     10.0, " Hz", 2)
         self.amplitude = self._spin(0.0, 3.0, 1.5, 0.05, " V", 3)
+        self.frequency_2 = self._spin(1.0, 20_000.0, 3000.0, 10.0, " Hz", 2)
+        self.amplitude_2 = self._spin(0.0, 3.0, 0.75, 0.05, " V", 3)
         self.offset = self._spin(-3.0, 3.0, 0.0, 0.05, " V", 3)
         self.noise = self._spin(0.0, 3.0, 0.0, 0.005, " V RMS", 3)
         if number == 2:
@@ -42,6 +45,8 @@ class SimulatorChannelForm(QGroupBox):
         form.addRow("Forma de onda:", self.waveform)
         form.addRow("Frecuencia:", self.frequency)
         form.addRow("Amplitud pico:", self.amplitude)
+        form.addRow("Frecuencia 2:", self.frequency_2)
+        form.addRow("Amplitud 2:", self.amplitude_2)
         form.addRow("Offset:", self.offset)
         form.addRow("Ruido (σ):", self.noise)
         self.enabled.toggled.connect(self._update_enabled)
@@ -58,8 +63,11 @@ class SimulatorChannelForm(QGroupBox):
 
     def _update_enabled(self, active: bool):
         for widget in (self.waveform, self.frequency, self.amplitude,
-                       self.offset, self.noise):
+                       self.frequency_2, self.amplitude_2, self.offset, self.noise):
             widget.setEnabled(active)
+        is_two_tone = active and self.waveform.currentData() == "two_tone"
+        self.frequency_2.setEnabled(is_two_tone)
+        self.amplitude_2.setEnabled(is_two_tone)
 
     def settings(self):
         return {
@@ -67,6 +75,8 @@ class SimulatorChannelForm(QGroupBox):
             "waveform": self.waveform.currentData(),
             "frequency": self.frequency.value(),
             "amplitude": self.amplitude.value(),
+            "frequency_2": self.frequency_2.value(),
+            "amplitude_2": self.amplitude_2.value(),
             "offset": self.offset.value(),
             "noise": self.noise.value(),
         }

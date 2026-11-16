@@ -17,7 +17,7 @@ class SimulatorControls(QGroupBox):
         self.waveform = QComboBox()
         for label, value in (("Senoidal", "sine"), ("Cuadrada", "square"),
                              ("Triangular", "triangle"), ("Pulso / PWM", "pulse"),
-                             ("Continua (DC)", "dc")):
+                             ("Continua (DC)", "dc"), ("Dos tonos", "two_tone")):
             self.waveform.addItem(label, value)
         source_row = QHBoxLayout()
         self.channel_enabled = QCheckBox(f"{channel} activo")
@@ -29,11 +29,15 @@ class SimulatorControls(QGroupBox):
 
         self.frequency = self._spin(1.0, 20000.0, 1000.0, 10.0, " Hz", 2)
         self.amplitude = self._spin(0.0, 3.0, 1.5, 0.05, " V", 3)
+        self.frequency_2 = self._spin(1.0, 20000.0, 3000.0, 10.0, " Hz", 2)
+        self.amplitude_2 = self._spin(0.0, 3.0, 0.75, 0.05, " V", 3)
         self.offset = self._spin(-3.0, 3.0, 0.0, 0.05, " V", 3)
         self.noise = self._spin(0.0, 3.0, 0.0, 0.005, " V RMS", 3)
         self.duty = self._spin(1.0, 99.0, 50.0, 1.0, " %", 1)
         form.addRow("Frecuencia:", self.frequency)
         form.addRow("Amplitud pico:", self.amplitude)
+        form.addRow("Frecuencia 2:", self.frequency_2)
+        form.addRow("Amplitud 2:", self.amplitude_2)
         form.addRow("Offset:", self.offset)
         form.addRow("Ruido (σ):", self.noise)
         form.addRow("Duty PWM:", self.duty)
@@ -46,8 +50,9 @@ class SimulatorControls(QGroupBox):
         layout.addWidget(info)
         self.channel_enabled.toggled.connect(self._emit_settings)
         self.waveform.currentIndexChanged.connect(self._emit_settings)
-        for spin in (self.frequency, self.amplitude, self.offset, self.noise, self.duty):
+        for spin in (self.frequency, self.amplitude, self.frequency_2, self.amplitude_2, self.offset, self.noise, self.duty):
             spin.valueChanged.connect(self._emit_settings)
+        self._emit_settings()
 
     @staticmethod
     def _spin(minimum, maximum, initial, step, suffix, decimals):
@@ -61,8 +66,11 @@ class SimulatorControls(QGroupBox):
 
     def _emit_settings(self, *_):
         enabled = self.channel_enabled.isChecked()
-        for control in (self.waveform, self.frequency, self.amplitude, self.offset, self.noise, self.duty):
+        for control in (self.waveform, self.frequency, self.amplitude, self.frequency_2, self.amplitude_2, self.offset, self.noise, self.duty):
             control.setEnabled(enabled)
+        is_two_tone = enabled and self.waveform.currentData() == "two_tone"
+        self.frequency_2.setEnabled(is_two_tone)
+        self.amplitude_2.setEnabled(is_two_tone)
         self.duty.setEnabled(enabled and self.waveform.currentData() == "pulse")
         self.settings_changed.emit(self.get_settings())
 
@@ -72,6 +80,8 @@ class SimulatorControls(QGroupBox):
             "waveform": self.waveform.currentData(),
             "frequency": self.frequency.value(),
             "amplitude": self.amplitude.value(),
+            "frequency_2": self.frequency_2.value(),
+            "amplitude_2": self.amplitude_2.value(),
             "offset": self.offset.value(),
             "noise": self.noise.value(),
             "duty": self.duty.value() / 100.0,

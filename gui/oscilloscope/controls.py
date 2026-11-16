@@ -2,6 +2,8 @@
 """Escalas, posiciones, fuente y configuración de disparo de ambos canales."""
 
 import numpy as np
+from config.defaults import FACTORY_DEFAULTS
+from processing.filters import FilterConfig
 from trigger.pulse_width import PulseWidthTrigger
 from trigger.edge_trigger import Edge_Trigger
 from trigger.timeout import TimeoutTrigger
@@ -17,32 +19,52 @@ class ControlsMixin:
         self.set_trigger_type("edge")
         self.controls.trigger_controls.reset_pulse_width_settings()
         self.controls.trigger_controls.reset_advanced_settings()
-        self.set_trigger_channel(1)
-        self.set_trigger_level(0.0)
-        self.set_trigger_slope("Rising")
-        self.set_trigger_mode("Auto")
-        self.set_trigger_holdoff(0.0)
+        self.set_trigger_channel(FACTORY_DEFAULTS["trigger_channel"])
+        self.set_trigger_level(FACTORY_DEFAULTS["trigger_level"])
+        self.set_trigger_slope(FACTORY_DEFAULTS["trigger_slope"])
+        self.set_trigger_mode(FACTORY_DEFAULTS["trigger_mode"])
+        self.set_trigger_holdoff(FACTORY_DEFAULTS["trigger_holdoff"])
 
 
     def reset_horizontal_controls(self, _checked=False):
-        self.set_horizontal_zoom(1.0)
-        self.set_horizontal_delay(0.0)
-        self.set_time_per_division(0.001)
+        self.set_horizontal_zoom(FACTORY_DEFAULTS["horizontal_zoom"])
+        self.set_horizontal_delay(FACTORY_DEFAULTS["horizontal_delay"])
+        self.set_time_per_division(FACTORY_DEFAULTS["time_per_division"])
         self.set_horizontal_reference("Center")
-        self.set_horizontal_position(0.0)
+        self.set_horizontal_position(FACTORY_DEFAULTS["horizontal_position"])
 
 
     def reset_vertical_controls(self, channel):
         if channel == 1:
-            self.set_volts_per_division(0.02)
-            self.set_vertical_position(0.0)
+            self.set_volts_per_division(FACTORY_DEFAULTS["volts_per_division"])
+            self.set_vertical_position(FACTORY_DEFAULTS["vertical_position"])
             self.controls.ch1_controls.visible_checkbox.setChecked(True)
         elif channel == 2:
-            self.set_ch2_volts_per_division(0.02)
+            self.set_ch2_volts_per_division(FACTORY_DEFAULTS["volts_per_division"])
             self.set_ch2_position(0.0)
             self.controls.ch2_controls.visible_checkbox.setChecked(True)
         else:
             raise ValueError("El canal debe ser 1 o 2")
+
+    def reset_factory_controls(self, _checked=False):
+        """Restablece controles de uso sin borrar calibraciones ni archivos."""
+        self.set_acquisition_mode(FACTORY_DEFAULTS["acquisition_mode"])
+        self.plot.set_interpolation_mode(FACTORY_DEFAULTS["interpolation"])
+        self.controls.set_interpolation(FACTORY_DEFAULTS["interpolation"])
+        self.reset_trigger_controls()
+        self.reset_horizontal_controls()
+        self.reset_vertical_controls(1)
+        self.reset_vertical_controls(2)
+        self.reset_math_controls()
+        self.controls.filter_controls.reset()
+        self.filter_config = FilterConfig()
+        self.plot.set_cursor_mode("Off")
+        self.controls.cursor_controls.mode.setCurrentText("Off")
+        # La configuración de fábrica también deja limpia la persistencia.
+        self.controls.acquisition_controls.autostore_button.setChecked(False)
+        self.erase_autostore()
+        self.reset_accumulation()
+        self.update_controls_state()
 
 
     def set_time_per_division(self, value):

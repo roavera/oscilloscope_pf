@@ -216,6 +216,8 @@ class MainWindow(QMainWindow):
                 form.waveform.setCurrentIndex(waveform_index)
             form.frequency.setValue(settings["frequency"])
             form.amplitude.setValue(settings["amplitude"])
+            form.frequency_2.setValue(settings.get("frequency_2", 3000.0))
+            form.amplitude_2.setValue(settings.get("amplitude_2", 0.75))
             form.offset.setValue(settings["offset"])
             form.noise.setValue(settings["noise"])
             form.enabled.setChecked(settings["enabled"])
@@ -263,6 +265,8 @@ class MainWindow(QMainWindow):
             panel.waveform.setCurrentIndex(index)
             panel.frequency.setValue(settings["frequency"])
             panel.amplitude.setValue(settings["amplitude"])
+            panel.frequency_2.setValue(settings.get("frequency_2", 3000.0))
+            panel.amplitude_2.setValue(settings.get("amplitude_2", 0.75))
             panel.offset.setValue(settings["offset"])
             panel.noise.setValue(settings["noise"])
             panel.channel_enabled.setChecked(settings["enabled"])
@@ -372,6 +376,25 @@ class MainWindow(QMainWindow):
             lambda: self.theme_manager.apply_theme("light")
         )
 
+        menu.addSeparator()
+        self.reset_controls_action = QAction("Restablecer controles", self)
+        self.reset_controls_action.setToolTip(
+            "Vuelve a la configuración inicial sin borrar calibraciones"
+        )
+        self.reset_controls_action.triggered.connect(
+            self.oscilloscope.reset_factory_controls
+        )
+        menu.addAction(self.reset_controls_action)
+
+        self.reset_factory_action = QAction(
+            "Restablecer configuración de fábrica", self
+        )
+        self.reset_factory_action.setToolTip(
+            "Restablece controles, pantalla y preferencias visuales"
+        )
+        self.reset_factory_action.triggered.connect(self._reset_factory_settings)
+        menu.addAction(self.reset_factory_action)
+
         self.theme_manager.theme_changed.connect(
             self._update_theme_actions
         )
@@ -384,6 +407,30 @@ class MainWindow(QMainWindow):
     def _update_theme_actions(self, theme):
         self.dark_action.setChecked(theme == "dark")
         self.light_action.setChecked(theme == "light")
+
+    def _reset_factory_settings(self):
+        answer = QMessageBox.question(
+            self,
+            "Restablecer configuración de fábrica",
+            "¿Restablecer controles y preferencias visuales?\n\n"
+            "Las calibraciones, puertos y archivos exportados no se eliminarán.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.oscilloscope.reset_factory_controls()
+        self._set_display_theme("dark")
+        if hasattr(self, "grid_action"):
+            self.grid_action.setChecked(True)
+        if hasattr(self, "grid_intensity_slider"):
+            self.grid_intensity_slider.setValue(50)
+        if hasattr(self.oscilloscope, "_layout_settings"):
+            self.oscilloscope._layout_settings.setValue(
+                "layout/sidebar_width_v2", 560
+            )
+            self.oscilloscope._restore_splitter_width()
+        self.statusBar().showMessage("Configuración de fábrica restaurada", 3000)
 
 
     def _create_acquisition_menu(self):

@@ -7,6 +7,7 @@ from acquisition.modes.envelope import EnvelopeResult
 from acquisition.modes.peak_detect import PeakDetectResult
 from acquisition.modes.high_resolution import effective_high_resolution_factor
 from exporting.capture_export import raw_capture
+from processing.filters import FilterConfig, apply_filter
 
 
 class ProcessingMixin:
@@ -48,6 +49,27 @@ class ProcessingMixin:
             self._pending_discontinuity = False
         self._reset_processing()
         self.trigger_found = False
+        self.update_controls_state()
+
+    def set_filter_configuration(self, enabled, kind, channel, cutoff_low, cutoff_high):
+        """Actualiza el filtro; se aplica a partir de la próxima captura."""
+        candidate = FilterConfig(
+            enabled=bool(enabled), kind=str(kind), channel=str(channel),
+            cutoff_low=float(cutoff_low), cutoff_high=float(cutoff_high),
+        )
+        if candidate.kind in ("bandpass", "bandstop") and candidate.cutoff_high <= candidate.cutoff_low:
+            self.controls.filter_controls.status_label.setText(
+                "Error: el corte superior debe ser mayor que el inferior"
+            )
+            return
+        self.filter_config = candidate
+        if candidate.enabled:
+            self.controls.filter_controls.status_label.setText(
+                f"Activo: {candidate.kind} · {candidate.channel} · desde la próxima captura"
+            )
+        else:
+            self.controls.filter_controls.status_label.setText("Filtro desactivado")
+        self._reset_processing(use_buffered=True)
         self.update_controls_state()
 
 
@@ -362,13 +384,14 @@ class ProcessingMixin:
             )
             if self.acquisition_processor.get_mode() == "high_resolution" else 1
         )
+        filtered = apply_filter(acquisition, self.sample_rate, self.filter_config)
         results = [
-            self.acquisition_processor.process(acquisition[:, ch - 1], channel=ch)
+            self.acquisition_processor.process(filtered[:, ch - 1], channel=ch)
             for ch in (1, 2)
         ]
         try:
             self.math_processor.configure_acquisition(self.acquisition_processor.get_config())
-            self._pending_math_result = self.math_processor.process(acquisition, self.sample_rate)
+            self._pending_math_result = self.math_processor.process(filtered, self.sample_rate)
             self._math_error = None
         except ValueError as exc:
             self._pending_math_result = None

@@ -1,0 +1,25 @@
+"""Valores iniciales y de restablecimiento del osciloscopio."""
+
+FACTORY_DEFAULTS = {
+    "acquisition_mode": "sampling",
+    "interpolation": "linear",
+    "time_per_division": 0.001,
+    "horizontal_position": 0.0,
+    "horizontal_zoom": 1.0,
+    "horizontal_delay": 0.0,
+    "volts_per_division": 0.02,
+    "vertical_position": 0.0,
+    "trigger_channel": 1,
+    "trigger_level": 0.0,
+    "trigger_slope": "Rising",
+    "trigger_mode": "Auto",
+    "trigger_holdoff": 0.0,
+    "math_operation": "add",
+    "math_source_a": 1,
+    "math_source_b": 2,
+    "math_position": 0.0,
+    "math_visible": False,
+    "theme": "dark",
+    "grid_enabled": True,
+    "grid_intensity": 50,
+}

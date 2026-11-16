@@ -6,6 +6,20 @@ from acquisition.fastact_density import FastActDensity
 
 
 class FastActMixin:
+    def set_autostore_enabled(self, enabled):
+        self.autostore_active = bool(enabled)
+        if self.autostore_active:
+            self.plot.set_autostore_mode(True)
+        else:
+            self.plot.set_autostore_mode(False)
+
+    def erase_autostore(self):
+        self.plot.clear_autostore()
+
+    def _autostore_add(self, samples, sample_rate, trigger_sample=None):
+        if getattr(self, "autostore_active", False):
+            self.plot.add_autostore_capture(samples, sample_rate, trigger_sample)
+
     def _reset_fastact(self):
         self._fastact_density = FastActDensity()
         self._fastact_last_refresh = monotonic()

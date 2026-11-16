@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 
 from gui.panels.vertical_controls import VerticalControls
 from gui.panels.math_controls import MathControls
+from gui.panels.filter_controls import FilterControls
 from gui.panels.measurement_controls import MeasurementControls
 from gui.panels.horizontal_controls import HorizontalControls
 from gui.panels.trigger_controls import TriggerControls
@@ -50,6 +51,9 @@ class OscilloscopeControls(QWidget):
 
     run_clicked = Signal()
     stop_clicked = Signal()
+    factory_reset_requested = Signal()
+    autostore_toggled = Signal(bool)
+    erase_requested = Signal()
 
     acquisition_mode_changed = Signal(str)
     interpolation_changed = Signal(str)
@@ -89,6 +93,7 @@ class OscilloscopeControls(QWidget):
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
         self.math_controls = MathControls()
+        self.filter_controls = FilterControls()
         self.cursor_controls = CursorControls()
         self.cursor_controls.setToolTip("Elegí CH1 o CH2 como referencia de los cursores de tensión y Track.")
         self.simulator_controls = SimulatorControls()
@@ -151,6 +156,7 @@ class OscilloscopeControls(QWidget):
             ("measurements", "MEDICIONES"),
             ("cursors", "CURSORES"),
             ("math", "MATH"),
+            ("filters", "FILTROS"),
             ("simulator", "SIMULADOR"),
         ):
             button = QPushButton(title, self)
@@ -243,8 +249,15 @@ class OscilloscopeControls(QWidget):
         math_layout.addStretch(1)
         self.pages.addWidget(math_page)
 
+        filter_page = QWidget()
+        filter_layout = QVBoxLayout(filter_page)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.addWidget(self.filter_controls)
+        filter_layout.addStretch(1)
+        self.pages.addWidget(filter_page)
+
         for key, index in {"controls": 0, "measurements": 1, "cursors": 2,
-                           "simulator": 3, "math": 4}.items():
+                           "simulator": 3, "math": 4, "filters": 5}.items():
             self.navigation_buttons[key].clicked.connect(
                 lambda _checked=False, i=index: self.pages.setCurrentIndex(i)
             )
@@ -322,6 +335,15 @@ class OscilloscopeControls(QWidget):
 
         self.simulator_controls.settings_changed.connect(
             self.simulator_settings_changed.emit
+        )
+        self.acquisition_controls.default_clicked.connect(
+            self.factory_reset_requested.emit
+        )
+        self.acquisition_controls.autostore_toggled.connect(
+            self.autostore_toggled.emit
+        )
+        self.acquisition_controls.erase_clicked.connect(
+            self.erase_requested.emit
         )
 
         # --------------------------------------------------------

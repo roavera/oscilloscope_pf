@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
 class AcquisitionControls(QGroupBox):
     run_clicked = Signal()
     stop_clicked = Signal()
+    default_clicked = Signal()
+    autostore_toggled = Signal(bool)
+    erase_clicked = Signal()
     mode_changed = Signal(str)
     interpolation_changed = Signal(str)
     average_count_changed = Signal(int)
@@ -62,6 +65,41 @@ class AcquisitionControls(QGroupBox):
             button.setMinimumHeight(26)
             buttons.addWidget(button, 1)
         layout.addLayout(buttons)
+
+        self.default_button = QPushButton("↺ DEFAULT")
+        self.default_button.setToolTip(
+            "Aplicar la configuración inicial del osciloscopio"
+        )
+        self.default_button.setMinimumHeight(24)
+        self.default_button.setStyleSheet("""
+            QPushButton {background:#805b2a;color:#fff4dc;border:1px solid #b88745;
+                         border-radius:5px;font-weight:bold;padding:2px 6px;}
+            QPushButton:hover:enabled {background:#a87332;}
+        """)
+        layout.addWidget(self.default_button)
+
+        persistence = QHBoxLayout()
+        self.autostore_button = QPushButton("AUTOSTORE")
+        self.autostore_button.setCheckable(True)
+        self.autostore_button.setStyleSheet("""
+            QPushButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
+                         border-radius:5px;font-weight:bold;padding:2px 6px;}
+            QPushButton:checked {background:#198754;color:white;border-color:#35b878;}
+            QPushButton:hover:enabled {background:#465d76;}
+            QPushButton:checked:hover:enabled {background:#157347;}
+        """)
+        self.autostore_button.setToolTip("Superponer capturas hasta pulsar ERASE")
+        self.erase_button = QPushButton("ERASE")
+        self.erase_button.setToolTip("Borrar las capturas persistentes")
+        self.erase_button.setStyleSheet("""
+            QPushButton {background:#5b3b42;color:#ffe8eb;border:1px solid #86565f;
+                         border-radius:5px;font-weight:bold;padding:2px 6px;}
+            QPushButton:hover:enabled {background:#754650;}
+        """)
+        for button in (self.autostore_button, self.erase_button):
+            button.setMinimumHeight(23)
+            persistence.addWidget(button, 1)
+        layout.addLayout(persistence)
 
         self.status_label = QLabel("STOP")
         self.status_label.setWordWrap(True)
@@ -166,6 +204,9 @@ class AcquisitionControls(QGroupBox):
     def connect_signals(self):
         self.run_button.clicked.connect(self.run_clicked.emit)
         self.stop_button.clicked.connect(self.stop_clicked.emit)
+        self.default_button.clicked.connect(self.default_clicked.emit)
+        self.autostore_button.toggled.connect(self.autostore_toggled.emit)
+        self.erase_button.clicked.connect(self.erase_clicked.emit)
         self.settings_button.clicked.connect(self.settings_dialog.show)
         self.mode_combo.currentIndexChanged.connect(self._emit_mode)
         self.peak_bucket_combo.currentIndexChanged.connect(

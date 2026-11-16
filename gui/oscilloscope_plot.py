@@ -656,6 +656,43 @@ class OscilloscopePlot(QWidget):
         self.fastact_image.setOpacity(0.85)
         self.plot_widget.addItem(self.fastact_image, ignoreBounds=True)
         self.fastact_image.hide()
+        self.autostore_active = False
+        self.autostore_captures = []
+        self.autostore_items = []
+
+    def set_autostore_mode(self, active):
+        self.autostore_active = bool(active)
+        self._refresh_autostore()
+
+    def clear_autostore(self):
+        self.autostore_captures.clear()
+        for item in self.autostore_items:
+            self.plot_widget.removeItem(item)
+        self.autostore_items.clear()
+
+    def add_autostore_capture(self, samples, sample_rate, trigger_sample=None):
+        data = np.asarray(samples, dtype=np.float32)
+        if data.ndim != 2 or data.shape[1] != 2 or len(data) < 2:
+            return
+        self.autostore_captures.append((data.copy(), float(sample_rate), trigger_sample))
+        self.autostore_captures = self.autostore_captures[-64:]
+        self._refresh_autostore()
+
+    def _refresh_autostore(self):
+        for item in self.autostore_items:
+            self.plot_widget.removeItem(item)
+        self.autostore_items.clear()
+        if not self.autostore_active:
+            return
+        for data, rate, reference in self.autostore_captures:
+            x = self._signal_time_axis(len(data), rate, reference)
+            for channel, color in ((1, "#e3c84b"), (2, "#38cfff")):
+                curve = self.plot_widget.plot()
+                curve.setZValue(4.8)
+                curve.setPen(pg.mkPen(color, width=1, alpha=65))
+                curve.setData(x, self._to_display(data[:, channel - 1], channel))
+                curve.setVisible(self.channel_visible[channel])
+                self.autostore_items.append(curve)
 
     def set_fastact_mode(self, active):
         self.fastact_active = bool(active)
@@ -818,6 +855,8 @@ class OscilloscopePlot(QWidget):
         self._refresh_math()
         if hasattr(self, "channel_marker"):
             self._update_channel_marker()
+        if hasattr(self, "autostore_captures"):
+            self._refresh_autostore()
         if hasattr(self, "cursor_lines"):
             self._refresh_cursors()
 
