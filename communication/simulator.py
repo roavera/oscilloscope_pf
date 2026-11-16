@@ -172,6 +172,8 @@ class FakeBlackPill:
             (200.0, 2000.0, 1.0),
         ]
 
+        self.duty = [0.5, 0.5]
+
         # ---------------------------------------------------------------------
         # Estado del códec
         # ---------------------------------------------------------------------
@@ -749,6 +751,13 @@ class FakeBlackPill:
                 1.0,
                 -1.0,
             )
+
+        if self.wave[ch] == Waveform.PULSE:
+            phase_fraction = (phase / (2.0 * math.pi)) % 1.0
+            return np.where(phase_fraction < self.duty[ch], 1.0, -1.0)
+
+        if self.wave[ch] == Waveform.DC:
+            return np.ones(n, dtype=float)
 
         # ---------------------------------------------------------------------
         # Triangular

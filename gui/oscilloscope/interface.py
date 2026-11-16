@@ -102,6 +102,9 @@ class InterfaceMixin:
         self.controls.simulator_settings_changed.connect(
             self._on_simulator_settings_changed
         )
+        self.controls.measurement_controls.overlay_changed.connect(
+            self.plot.set_measurement_overlay
+        )
 
         self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
         self.cursor_controls.channel_changed.connect(self.plot.set_cursor_channel)

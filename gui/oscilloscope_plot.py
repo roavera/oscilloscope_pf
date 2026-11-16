@@ -382,6 +382,10 @@ class OscilloscopePlot(QWidget):
         self.channel_legend = pg.TextItem(anchor=(0, 0), color="#a8b5c8")
         self.plot_widget.addItem(self.channel_legend, ignoreBounds=True)
         self.channel_legend.setZValue(30)
+        self.measurement_overlay = pg.TextItem(anchor=(0, 0), color="#f4d35e")
+        self.measurement_overlay.setZValue(35)
+        self.measurement_overlay.hide()
+        self.plot_widget.addItem(self.measurement_overlay, ignoreBounds=True)
 
         # ------------------------------------------------------------
         # NIVEL DE TRIGGER
@@ -910,6 +914,13 @@ class OscilloscopePlot(QWidget):
         self._cursor_signal_y = data[:, 0].copy()
         self._refresh_channel_curves()
         self._refresh_cursors()
+
+    def set_measurement_overlay(self, text, visible=True):
+        """Muestra las mediciones seleccionadas dentro del display."""
+        if text:
+            self.measurement_overlay.setText(text)
+            self.measurement_overlay.setPos(self.horizontal_position, self.vertical_divisions / 2.0 - .4)
+        self.measurement_overlay.setVisible(bool(visible and text))
 
     def set_roll_signal(self, samples, relative_seconds):
         """Coloca el dato nuevo a la derecha, sin trigger."""
