@@ -12,9 +12,11 @@ class FastActMixin:
             self.plot.set_autostore_mode(True)
         else:
             self.plot.set_autostore_mode(False)
+        self.update_controls_state()
 
     def erase_autostore(self):
         self.plot.clear_autostore()
+        self.update_controls_state()
 
     def _autostore_add(self, samples, sample_rate, trigger_sample=None):
         if getattr(self, "autostore_active", False):

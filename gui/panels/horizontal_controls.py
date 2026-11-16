@@ -60,11 +60,11 @@ class HorizontalControls(QGroupBox):
 
     def create_interface(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 8)
-        layout.setSpacing(5)
+        layout.setContentsMargins(6, 6, 6, 5)
+        layout.setSpacing(3)
 
         knobs_row = QHBoxLayout()
-        knobs_row.setSpacing(8)
+        knobs_row.setSpacing(4)
 
         time_column = QVBoxLayout()
         time_column.setSpacing(3)
@@ -78,7 +78,7 @@ class HorizontalControls(QGroupBox):
             initial=list(self.time_options).index("1 ms/div"),
             reset_value=list(self.time_options).index("1 ms/div"),
             pixels_per_step=12.0,
-            size=64,
+            size=56,
         )
         self.time_knob.setToolTip(
             "Arrastrá hacia arriba para reducir Tiempo/div.\n"
@@ -102,7 +102,7 @@ class HorizontalControls(QGroupBox):
         position_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.position_knob = PositionKnob(
             minimum=-6.0, maximum=6.0, initial=0.0,
-            accent_color="#B0BDCC", size=64,
+            accent_color="#B0BDCC", size=56,
         )
         self.position_label = QLabel()
         self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

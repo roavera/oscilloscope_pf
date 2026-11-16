@@ -208,7 +208,9 @@ class OscilloscopeWidget(
         self.cursor_controls = self.controls.cursor_controls
         self.create_interface()
         self.export_controls = ExportControls(self)
-        self.controls.layout().insertWidget(0, self.export_controls)
+        # Exportar comparte la barra superior para no consumir una fila
+        # completa antes de Adquisición.
+        self.controls.navigation_layout.insertWidget(0, self.export_controls, 0)
         self.connect_signals()
 
         # La interfaz se actualiza desde el hilo de Qt.

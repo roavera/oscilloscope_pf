@@ -75,7 +75,7 @@ class MeasurementControls(QWidget):
             header = QToolButton()
             header.setText(f"▾  {group_name}")
             header.setCheckable(True)
-            header.setChecked(True)
+            header.setChecked(group_name in {"Amplitud", "Tiempo y frecuencia"})
             header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             header.setStyleSheet("QToolButton { text-align: left; font-weight: 600; padding: 5px; }")
             body = QWidget()
@@ -83,18 +83,24 @@ class MeasurementControls(QWidget):
             grid.setContentsMargins(8, 0, 2, 4)
             grid.setHorizontalSpacing(8)
             grid.setVerticalSpacing(1)
-            for row, key in enumerate(definitions_key for definitions_key in by_key if definitions_key in keys):
+            group_keys = [definitions_key for definitions_key in by_key if definitions_key in keys]
+            for index, key in enumerate(group_keys):
                 label, tooltip = by_key[key]
                 check = QCheckBox(label)
                 check.setChecked(key in {"maximum", "minimum", "peak_to_peak", "mean", "rms", "frequency", "period"})
                 check.setToolTip(tooltip)
                 value = QLabel("—")
                 value.setStyleSheet("font-size: 16px; font-weight: 600;")
-                grid.addWidget(check, row, 0)
-                grid.addWidget(value, row, 1)
+                value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                row = index // 2
+                column = (index % 2) * 2
+                grid.addWidget(check, row, column)
+                grid.addWidget(value, row, column + 1)
                 self.checkboxes[key] = check
                 self.value_labels[key] = value
                 check.toggled.connect(self._render)
+            grid.setColumnStretch(1, 1)
+            grid.setColumnStretch(3, 1)
             layout.addWidget(header)
             layout.addWidget(body)
             self.group_buttons[group_name] = header

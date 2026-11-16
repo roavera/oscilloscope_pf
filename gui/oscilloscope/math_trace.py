@@ -59,6 +59,7 @@ class MathTraceMixin:
     def set_math_visible(self, visible):
         self.plot.set_math_settings(visible=visible)
         self._update_math_status()
+        self.update_controls_state()
 
 
     def set_math_configuration(self, operation, source_a, source_b):

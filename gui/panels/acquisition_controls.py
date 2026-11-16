@@ -34,8 +34,8 @@ class AcquisitionControls(QGroupBox):
 
     def create_interface(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 10, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 5)
+        layout.setSpacing(3)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
@@ -62,7 +62,7 @@ class AcquisitionControls(QGroupBox):
             QPushButton:hover:enabled {background:#465d76;}
         """)
         for button in (self.run_button, self.stop_button, self.settings_button):
-            button.setMinimumHeight(26)
+            button.setMinimumHeight(23)
             buttons.addWidget(button, 1)
         layout.addLayout(buttons)
 
@@ -76,8 +76,6 @@ class AcquisitionControls(QGroupBox):
                          border-radius:5px;font-weight:bold;padding:2px 6px;}
             QPushButton:hover:enabled {background:#a87332;}
         """)
-        layout.addWidget(self.default_button)
-
         persistence = QHBoxLayout()
         self.autostore_button = QPushButton("AUTOSTORE")
         self.autostore_button.setCheckable(True)
@@ -96,10 +94,17 @@ class AcquisitionControls(QGroupBox):
                          border-radius:5px;font-weight:bold;padding:2px 6px;}
             QPushButton:hover:enabled {background:#754650;}
         """)
-        for button in (self.autostore_button, self.erase_button):
+        for button in (self.default_button, self.autostore_button, self.erase_button):
             button.setMinimumHeight(23)
             persistence.addWidget(button, 1)
         layout.addLayout(persistence)
+
+        self.feature_status_label = QLabel("MATH OFF · FILTRO OFF · AUTOSTORE OFF")
+        self.feature_status_label.setStyleSheet(
+            "color:#9fb0c4;font-size:9px;padding:0px 2px;"
+        )
+        self.feature_status_label.setToolTip("Estado de las funciones adicionales")
+        layout.addWidget(self.feature_status_label)
 
         self.status_label = QLabel("STOP")
         self.status_label.setWordWrap(True)
@@ -300,6 +305,9 @@ class AcquisitionControls(QGroupBox):
         self.status_label.setVisible(bool(error))
         self.setToolTip(f"{status}: {error}" if error else str(status))
         self._update_buttons()
+
+    def set_feature_status(self, text):
+        self.feature_status_label.setText(str(text))
 
     def set_actions_enabled(self, enabled):
         self._actions_enabled = bool(enabled)

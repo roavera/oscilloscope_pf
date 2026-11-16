@@ -147,6 +147,7 @@ class OscilloscopeControls(QWidget):
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(4)
+        self.navigation_layout = nav
         self.navigation_group = QButtonGroup(self)
         self.navigation_group.setExclusive(True)
         self.navigation_buttons = {}
@@ -161,7 +162,7 @@ class OscilloscopeControls(QWidget):
         ):
             button = QPushButton(title, self)
             button.setCheckable(True)
-            button.setMinimumHeight(30)
+            button.setMinimumHeight(24)
             button.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Fixed,
@@ -172,8 +173,8 @@ class OscilloscopeControls(QWidget):
                     color: #e5edf7;
                     border: 1px solid #3e5066;
                     border-radius: 4px;
-                    padding: 5px 2px;
-                    font-size: 10px;
+                    padding: 2px 1px;
+                    font-size: 9px;
                     font-weight: 600;
                 }
                 QPushButton:checked { background: #496488; }

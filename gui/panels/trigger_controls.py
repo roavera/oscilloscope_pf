@@ -39,11 +39,11 @@ class TriggerControls(QGroupBox):
     def create_interface(self):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 8)
-        layout.setSpacing(5)
+        layout.setContentsMargins(6, 6, 6, 5)
+        layout.setSpacing(3)
 
         self.settings_button = QPushButton("CONFIGURACIÓN")
-        self.settings_button.setMinimumHeight(30)
+        self.settings_button.setMinimumHeight(25)
         self.settings_button.setToolTip("Configurar tipo, modo y flanco del disparo")
         self.settings_button.setStyleSheet("""
             QPushButton {background:#34465a;color:#f0f4f8;
@@ -55,7 +55,7 @@ class TriggerControls(QGroupBox):
         self.settings_button.setToolTip("Configuración de trigger: tipo, modo y flanco")
 
         self.single_button = QPushButton("SINGLE")
-        self.single_button.setMinimumHeight(28)
+        self.single_button.setMinimumHeight(25)
         self.single_button.setToolTip(
             "Espera un disparo válido, captura una vez y congela la pantalla."
         )
@@ -72,7 +72,7 @@ class TriggerControls(QGroupBox):
         actions.addWidget(self.settings_button, 1)
         actions.addWidget(self.single_button, 1)
         self.auto_level_button = QPushButton("AUTO LEVEL")
-        self.auto_level_button.setMinimumHeight(28)
+        self.auto_level_button.setMinimumHeight(25)
         self.auto_level_button.setToolTip(
             "Calcula un umbral de disparo desde el canal seleccionado. "
             "No modifica las muestras ni las escalas."
@@ -95,7 +95,7 @@ class TriggerControls(QGroupBox):
         knob_column.setSpacing(3)
         self.level_knob = LevelKnob(
             minimum=self._visible_min, maximum=self._visible_max,
-            initial=self._level, accent_color="#e478c4", size=64,
+            initial=self._level, accent_color="#e478c4", size=56,
         )
         knob_column.addWidget(self.level_knob, 0, Qt.AlignmentFlag.AlignHCenter)
         self.zero_button = QPushButton("0 V", self)
@@ -129,7 +129,7 @@ class TriggerControls(QGroupBox):
         self.level_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.level_input.setKeyboardTracking(False)
         self.level_input.setAccelerated(True)
-        self.level_input.setMinimumHeight(28)
+        self.level_input.setMinimumHeight(24)
         self.level_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         # El rango numérico amplio no debe ensanchar el panel lateral.
         self.level_input.setMinimumWidth(0)

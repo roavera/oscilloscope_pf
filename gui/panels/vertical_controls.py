@@ -47,12 +47,12 @@ class VerticalControls(QGroupBox):
 
     def create_interface(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 8)
-        layout.setSpacing(5)
+        layout.setContentsMargins(6, 6, 6, 5)
+        layout.setSpacing(3)
 
         columns = QHBoxLayout()
         columns.setContentsMargins(0, 0, 0, 0)
-        columns.setSpacing(8)
+        columns.setSpacing(4)
 
         # Izquierda: escala vertical, perilla y selector sincronizados.
         voltage_panel = QWidget(self)
@@ -103,7 +103,7 @@ class VerticalControls(QGroupBox):
 
         self.position_knob = PositionKnob(
             minimum=-4.0, maximum=4.0, initial=0.0,
-            accent_color=("#FFD54A" if self.channel == "CH1" else "#39D5F8"), size=64,
+            accent_color=("#FFD54A" if self.channel == "CH1" else "#39D5F8"), size=56,
         )
         position_layout.addWidget(
             self.position_knob, 0, Qt.AlignmentFlag.AlignHCenter

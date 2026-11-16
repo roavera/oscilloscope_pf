@@ -185,6 +185,13 @@ class DisplayMixin:
 
     def update_controls_state(self):
         self._refresh_measurements()
+        features = []
+        math_on = bool(getattr(self.plot, "math_visible", False))
+        features.append("MATH ON" if math_on else "MATH OFF")
+        filter_config = getattr(self, "filter_config", None)
+        features.append("FILTRO ON" if filter_config is not None and filter_config.enabled else "FILTRO OFF")
+        features.append("AUTOSTORE ON" if getattr(self, "autostore_active", False) else "AUTOSTORE OFF")
+        self.controls.acquisition_controls.set_feature_status("  ·  ".join(features))
         self.controls.horizontal_controls.set_navigation_enabled(
             not self.running and self.acquisition_processor.get_mode() not in ("roll", "fastact")
         )
