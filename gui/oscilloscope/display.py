@@ -5,6 +5,7 @@ from copy import deepcopy
 from time import monotonic
 import numpy as np
 from acquisition.modes.envelope import EnvelopeResult
+from acquisition.modes.peak_detect import PeakDetectResult
 
 
 class DisplayMixin:
@@ -12,6 +13,10 @@ class DisplayMixin:
 
     def _render_processed(self, result, trigger_sample=None):
         if isinstance(result, EnvelopeResult):
+            if isinstance(result, PeakDetectResult):
+                self._capture_measurements(self._last_peak_capture)
+            else:
+                self._clear_measurements()
             self.last_envelope = deepcopy(result)
             self.last_acquisition = None
             self._last_render_trigger_sample = trigger_sample
@@ -33,6 +38,7 @@ class DisplayMixin:
         """Representa muestras sin ejecutar ni acumular el algoritmo."""
         self.last_envelope = None
         self.last_acquisition = np.asarray(samples, dtype=np.float32).copy()
+        self._capture_measurements(self.last_acquisition)
         self._last_render_trigger_sample = trigger_sample
         if self.acquisition_processor.get_mode() == "average":
             self._last_display_buffer = None
@@ -128,6 +134,7 @@ class DisplayMixin:
                 self.last_acquisition = None
                 self.last_envelope = None
                 self.plot.clear_signal()
+                self._clear_measurements()
                 self.last_math = None
                 self.capture_archive.clear()
                 self.export_controls.refresh()
@@ -156,6 +163,7 @@ class DisplayMixin:
                 self.last_acquisition = None
                 self.last_envelope = None
                 self.plot.clear_signal()
+                self._clear_measurements()
                 self.last_math = None
                 self.capture_archive.clear()
                 self.export_controls.refresh()
@@ -169,6 +177,7 @@ class DisplayMixin:
 
 
     def update_controls_state(self):
+        self._refresh_measurements()
         self.controls.horizontal_controls.set_navigation_enabled(
             not self.running and self.acquisition_processor.get_mode() not in ("roll", "fastact")
         )

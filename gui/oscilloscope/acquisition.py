@@ -203,6 +203,7 @@ class AcquisitionMixin:
         Los controles de la interfaz se convierten de voltios antes de entrar aquí.
         """
         self.acquisition.configure_simulator(channel=channel, **kwargs)
+        self._clear_measurements()
         with self._buffer_lock:
             self.buffer.clear()
             self._new_data = False
@@ -213,6 +214,7 @@ class AcquisitionMixin:
     def reset_acquisition(self, sample_rate):
         """Descarta muestras previas y actualiza la base temporal."""
         self.capture_archive.clear()
+        self._clear_measurements()
         self._clear_frozen_horizontal()
         rate = float(sample_rate)
         if not np.isfinite(rate) or rate <= 0:

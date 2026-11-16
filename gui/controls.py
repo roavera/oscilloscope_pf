@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 
 from gui.panels.vertical_controls import VerticalControls
 from gui.panels.math_controls import MathControls
+from gui.panels.measurement_controls import MeasurementControls
 from gui.panels.horizontal_controls import HorizontalControls
 from gui.panels.trigger_controls import TriggerControls
 from gui.panels.acquisition_controls import AcquisitionControls
@@ -212,21 +213,9 @@ class OscilloscopeControls(QWidget):
         controls_layout.setRowStretch(2, 1)
         self.pages.addWidget(controls_page)
 
-        # Página 1: espacio reservado para mediciones automáticas.
-        measurements_page = QWidget()
-        measurements_layout = QVBoxLayout(measurements_page)
-        measurements_layout.setContentsMargins(8, 12, 8, 8)
-        measurements_title = QLabel("Mediciones automáticas · CH1")
-        measurements_title.setStyleSheet("font-weight: bold;")
-        measurements_layout.addWidget(measurements_title)
-        measurements_note = QLabel(
-            "Próximamente: frecuencia, período, RMS y Vpp.\n"
-            "Todavía no se calculan ni se muestran valores ficticios."
-        )
-        measurements_note.setWordWrap(True)
-        measurements_layout.addWidget(measurements_note)
-        measurements_layout.addStretch(1)
-        self.pages.addWidget(measurements_page)
+        # Página 1: mediciones de la captura de CH1 o CH2.
+        self.measurement_controls = MeasurementControls()
+        self.pages.addWidget(self.measurement_controls)
 
         # Página 2: reutiliza el panel de cursores original.
         cursors_page = QWidget()

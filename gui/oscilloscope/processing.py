@@ -56,6 +56,7 @@ class ProcessingMixin:
         self.trigger_found = False
         self.trigger.fractional_offset = 0.0
         if not preserve_display:
+            self._clear_measurements()
             self.last_acquisition = None
             self.last_envelope = None
             self._last_display_buffer = None
@@ -73,6 +74,7 @@ class ProcessingMixin:
             raise ValueError(f"Modo no disponible: {mode}")
         previous = self.acquisition_processor.get_mode()
         if mode != previous:
+            self._clear_measurements()
             self._clear_frozen_horizontal()
             if mode == "roll":
                 self._pre_roll_time_per_division = self.time_per_division
