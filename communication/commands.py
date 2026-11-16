@@ -33,6 +33,9 @@ class Waveform(IntEnum):
     SQUARE = 1
     TRIANGLE = 2
     CHIRP = 3
+    # Formas disponibles solo en el simulador local.
+    PULSE = 4
+    DC = 5
 
 
 class OutputMode(str, Enum):

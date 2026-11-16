@@ -1,11 +1,14 @@
 """Integra mediciones sin alterar adquisición, trigger ni datos del gráfico."""
-from processing.measurements import measure_amplitude, measure_timing
+from processing.measurements import (measure_amplitude, measure_timing,
+                                     measure_transients, measure_interchannel)
 
 
 class MeasurementsMixin:
     def _clear_measurements(self):
         self._measurement_results = [None, None]
         self._measurement_timing = [None, None]
+        self._measurement_transients = [None, None]
+        self._measurement_interchannel = None
         self._measurement_units = ["u.a.", "u.a."]
         self._measurement_mode = None
         self._measurement_source = None
@@ -19,17 +22,25 @@ class MeasurementsMixin:
         active = self.acquisition.active_channels
         source = self.acquisition.source
         physical = self.voltage_calibration.as_dict()["blackpill_usb"]
-        self._measurement_results = [
-            measure_amplitude(samples[:, ch]) if active[ch] else None
-            for ch in (0, 1)
-        ]
         # Hi-Res reduce la cantidad de muestras y la frecuencia efectiva.
         factor = self._last_high_resolution_factor if mode == "high_resolution" else 1
         rate = self.sample_rate / factor
+        self._measurement_results = [
+            measure_amplitude(samples[:, ch], rate) if active[ch] else None
+            for ch in (0, 1)
+        ]
         self._measurement_timing = [
             measure_timing(samples[:, ch], rate) if active[ch] else None
             for ch in (0, 1)
         ]
+        self._measurement_transients = [
+            measure_transients(samples[:, ch], rate) if active[ch] else None
+            for ch in (0, 1)
+        ]
+        self._measurement_interchannel = (
+            measure_interchannel(samples[:, 0], samples[:, 1], rate)
+            if all(active) else None
+        )
         self._measurement_units = [
             "V" if source == "simulator" or (
                 source == "blackpill_usb" and physical[f"ch{ch + 1}"]["verified"]
@@ -45,6 +56,8 @@ class MeasurementsMixin:
         source = self.acquisition.source
         results = getattr(self, "_measurement_results", [None, None])
         timing = getattr(self, "_measurement_timing", [None, None])
+        transients = getattr(self, "_measurement_transients", [None, None])
+        interchannel = getattr(self, "_measurement_interchannel", None)
         units = getattr(self, "_measurement_units", ["u.a.", "u.a."])
         active = self.acquisition.active_channels
         supported = mode in ("sampling", "average", "high_resolution", "peak_detect")
@@ -55,14 +68,20 @@ class MeasurementsMixin:
             if not supported:
                 results[ch] = None
                 timing[ch] = None
+                transients[ch] = None
+                interchannel = None
                 note = "Mediciones no disponibles en este modo en esta versión"
             elif not active[ch]:
                 results[ch] = None
                 timing[ch] = None
+                transients[ch] = None
+                interchannel = None
                 note = "Canal sin datos o desactivado"
             elif not same_capture or results[ch] is None:
                 results[ch] = None
                 timing[ch] = None
+                transients[ch] = None
+                interchannel = None
                 note = "Sin captura válida"
             else:
                 if self._audio_error is not None or self._connection_state != "connected":
@@ -87,4 +106,6 @@ class MeasurementsMixin:
                 elif source == "simulator":
                     note += " · voltios simulados"
             notes.append(note)
-        self.controls.measurement_controls.set_readings(results, units, notes, timing)
+        self.controls.measurement_controls.set_readings(
+            results, units, notes, timing, transients, interchannel
+        )

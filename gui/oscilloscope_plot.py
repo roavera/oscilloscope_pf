@@ -31,13 +31,10 @@ class ChannelMarker(QGraphicsObject):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(painter.RenderHint.Antialiasing)
-        
         color = (PLOT_COLORS[self.plot.display_theme]["ch1"]
                  if self.channel == 1 else "#38cfff")
-
         painter.setPen(QPen(QColor(color).darker(130), 1))
         painter.setBrush(QBrush(QColor(color)))
-        
         painter.drawPolygon(QPolygonF([
             QPointF(0, -11), QPointF(28, 0), QPointF(0, 11)
         ]))
@@ -49,13 +46,8 @@ class ChannelMarker(QGraphicsObject):
         if event.button() != Qt.MouseButton.LeftButton:
             event.ignore()
             return
-
-        # Guardamos la referencia al inicio del arrastre. No usamos la
-        # posición actual del marcador porque se mueve junto con el rango Y.
         self._drag_start_scene_y = event.scenePos().y()
-        self._drag_start_divisions = (
-            self.plot.channel_positions[self.channel]
-        )
+        self._drag_start_divisions = self.plot.channel_positions[self.channel]
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -92,6 +84,48 @@ class ChannelMarker(QGraphicsObject):
         event.accept()
 
 
+class MathMarker(ChannelMarker):
+    """Marcador de la posición vertical de MATH."""
+
+    def __init__(self, plot):
+        super().__init__(plot, 1)
+        self.setToolTip("MATH · Arrastrá para mover la posición vertical")
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        self._drag_start_scene_y = event.scenePos().y()
+        self._drag_start_divisions = self.plot.math_position
+        event.accept()
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+        color = QColor("#55e68b")
+        painter.setPen(QPen(color.darker(130), 1))
+        painter.setBrush(QBrush(color))
+        painter.drawPolygon(QPolygonF([
+            QPointF(0, -11), QPointF(28, 0), QPointF(0, 11)
+        ]))
+        painter.setPen(QColor("#171717"))
+        painter.drawText(QRectF(1, -10, 26, 20),
+                         Qt.AlignmentFlag.AlignCenter, "M")
+
+    def mouseMoveEvent(self, event):
+        if not hasattr(self, "_drag_start_scene_y"):
+            event.ignore()
+            return
+        view = self.plot.plot_widget.getViewBox()
+        height = view.sceneBoundingRect().height()
+        if height <= 0:
+            event.accept()
+            return
+        delta = self._drag_start_scene_y - event.scenePos().y()
+        divisions = self._drag_start_divisions + delta * self.plot.vertical_divisions / height
+        self.plot.math_position_changed.emit(float(np.clip(divisions, -4, 4)))
+        event.accept()
+
+
 class OscilloscopePlot(QWidget):
     
     # Se emite solo cuando el usuario arrastra el trigger.
@@ -100,6 +134,7 @@ class OscilloscopePlot(QWidget):
     vertical_position_changed = Signal(float)
     cursor_readout_changed = Signal(str)
     ch2_position_changed = Signal(float)
+    math_position_changed = Signal(float)
 
     def __init__(
         self,
@@ -149,6 +184,7 @@ class OscilloscopePlot(QWidget):
         self.math_visible = False
         self.math_scale = 0.02
         self.math_position = 0.0
+        self.math_digital = False
         self.math_expression = "CH1 + CH2"
         self._math_values = None
         self._math_bounds = None
@@ -197,7 +233,7 @@ class OscilloscopePlot(QWidget):
             color.setAlpha(55)
             self.envelope_fills[channel].setBrush(pg.mkBrush(color))
 
-        math_color = QColor("#c993ff" if theme_name == "dark" else "#8b36c7")
+        math_color = QColor("#55e68b" if theme_name == "dark" else "#168a4b")
         for curve in (self.math_curve, self.math_lower, self.math_upper):
             curve.setPen(pg.mkPen(math_color, width=1.6))
         self.math_legend.setColor(math_color)
@@ -378,10 +414,16 @@ class OscilloscopePlot(QWidget):
         self.math_legend = pg.TextItem(anchor=(0, 0))
         self.math_legend.setZValue(30)
         self.plot_widget.addItem(self.math_legend, ignoreBounds=True)
+        self.math_marker = MathMarker(self)
+        self.plot_widget.scene().addItem(self.math_marker)
         self._refresh_math()
         self.channel_legend = pg.TextItem(anchor=(0, 0), color="#a8b5c8")
         self.plot_widget.addItem(self.channel_legend, ignoreBounds=True)
         self.channel_legend.setZValue(30)
+        self.measurement_overlay = pg.TextItem(anchor=(0, 0), color="#f4d35e")
+        self.measurement_overlay.setZValue(35)
+        self.measurement_overlay.hide()
+        self.plot_widget.addItem(self.measurement_overlay, ignoreBounds=True)
 
         # ------------------------------------------------------------
         # NIVEL DE TRIGGER
@@ -467,6 +509,8 @@ class OscilloscopePlot(QWidget):
         view = self.plot_widget.getViewBox()
         view.sigRangeChanged.connect(self._update_channel_marker)
         view.sigResized.connect(self._update_channel_marker)
+        view.sigRangeChanged.connect(self._update_math_marker)
+        view.sigResized.connect(self._update_math_marker)
 
         self._create_cursors()
         self.update_scales()
@@ -484,6 +528,16 @@ class OscilloscopePlot(QWidget):
             marker.setPos(scene_rect.left() - 27, y)
             marker.setVisible(self.channel_visible[ch])
 
+    def _update_math_marker(self, *args):
+        view = self.plot_widget.getViewBox()
+        scene_rect = view.sceneBoundingRect()
+        y = view.mapViewToScene(QPointF(0.0, self.math_position)).y()
+        y = float(np.clip(y, scene_rect.top() + 12, scene_rect.bottom() - 12))
+        self.math_marker.setPos(scene_rect.left() - 27, y)
+        signal = self._math_values is not None and self._math_values.size > 0
+        envelope = self._math_bounds is not None and self._math_bounds[0].size > 0
+        self.math_marker.setVisible(self.math_visible and (signal or envelope))
+
     # ================================================================
     # RANGOS VISIBLES
     # ================================================================
@@ -498,7 +552,8 @@ class OscilloscopePlot(QWidget):
     def _from_display(self, value, channel):
         return (np.asarray(value) - self.channel_positions[channel]) * self.channel_scales[channel]
 
-    def set_math_settings(self, *, scale=None, position=None, visible=None, expression=None):
+    def set_math_settings(self, *, scale=None, position=None, visible=None,
+                          expression=None, digital=None):
         if scale is not None:
             if not np.isfinite(scale) or scale <= 0:
                 raise ValueError("Escala MATH inválida")
@@ -511,6 +566,8 @@ class OscilloscopePlot(QWidget):
             self.math_visible = bool(visible)
         if expression is not None:
             self.math_expression = str(expression)
+        if digital is not None:
+            self.math_digital = bool(digital)
         self._refresh_math()
 
     def set_math_signal(self, values, sample_rate, trigger_sample=None):
@@ -546,10 +603,18 @@ class OscilloscopePlot(QWidget):
         signal = self._math_values is not None and self._math_values.size > 0
         envelope = self._math_bounds is not None and self._math_bounds[0].size > 0
         if signal:
-            self._draw_interpolated_curve(
-                self.math_curve, self._math_x, convert(self._math_values),
-                channel=1, math_trace=True,
-            )
+            y = convert(self._math_values)
+            if self.math_digital:
+                color = "#ffb347" if self.display_theme == "dark" else "#c46b00"
+                self.math_curve.setData(
+                    self._math_x, y, pen=pg.mkPen(color, width=2.0),
+                    stepMode="left",
+                )
+            else:
+                self._draw_interpolated_curve(
+                    self.math_curve, self._math_x, y,
+                    channel=1, math_trace=True,
+                )
         if envelope:
             self.math_lower.setData(self._math_x, convert(self._math_bounds[0]))
             self.math_upper.setData(self._math_x, convert(self._math_bounds[1]))
@@ -557,11 +622,11 @@ class OscilloscopePlot(QWidget):
         for item in (self.math_lower, self.math_upper, self.math_fill):
             item.setVisible(self.math_visible and envelope)
         unit = "V" if self.voltage_units else "u.a."
-        self.math_legend.setText(
-            f"MATH = {self.math_expression} · {self.math_scale:g} {unit}/div"
-        )
+        suffix = " · DIGITAL: 0=Bajo / 1=Alto" if self.math_digital else f" · {self.math_scale:g} {unit}/div"
+        self.math_legend.setText(f"MATH = {self.math_expression}{suffix}")
         self.math_legend.setPos(self.horizontal_position, self.vertical_divisions/2 - 0.35)
         self.math_legend.setVisible(self.math_visible and (signal or envelope))
+        self._update_math_marker()
 
     def set_channel_settings(self, channel, *, scale=None, position=None, visible=None):
         if channel not in (1, 2):
@@ -638,7 +703,7 @@ class OscilloscopePlot(QWidget):
     def _draw_interpolated_curve(self, curve, x, y, channel=1, *, math_trace=False):
         """Solo pyqtgraph ve estos vectores; cursores y mediciones usan RAW."""
         if math_trace:
-            color = "#c993ff" if self.display_theme == "dark" else "#8b36c7"
+            color = "#55e68b" if self.display_theme == "dark" else "#168a4b"
             width = 1.6
         else:
             color = PLOT_COLORS[self.display_theme]["ch1"] if channel == 1 else "#38cfff"
@@ -910,6 +975,13 @@ class OscilloscopePlot(QWidget):
         self._cursor_signal_y = data[:, 0].copy()
         self._refresh_channel_curves()
         self._refresh_cursors()
+
+    def set_measurement_overlay(self, text, visible=True):
+        """Muestra las mediciones seleccionadas dentro del display."""
+        if text:
+            self.measurement_overlay.setText(text)
+            self.measurement_overlay.setPos(self.horizontal_position, self.vertical_divisions / 2.0 - .4)
+        self.measurement_overlay.setVisible(bool(visible and text))
 
     def set_roll_signal(self, samples, relative_seconds):
         """Coloca el dato nuevo a la derecha, sin trigger."""

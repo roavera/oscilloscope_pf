@@ -146,12 +146,12 @@ class _USBBackend:
             raise RuntimeError("Esta fuente no admite configuración simulada")
         if channel not in (0, 1):
             raise ValueError("Canal inválido")
-        allowed = {"waveform", "frequency", "amplitude", "offset", "noise", "enabled"}
+        allowed = {"waveform", "frequency", "amplitude", "offset", "noise", "duty", "enabled"}
         if set(settings) - allowed:
             raise ValueError("Parámetro de simulación desconocido")
         settings = dict(settings)
         if "waveform" in settings and settings["waveform"] not in (
-                "sine", "square", "triangle"):
+                "sine", "square", "triangle", "pulse", "dc"):
             raise ValueError("Forma de onda inválida")
         if "enabled" in settings:
             if not isinstance(settings["enabled"], (bool, np.bool_)):
@@ -165,6 +165,8 @@ class _USBBackend:
                 raise ValueError(f"{key} debe ser finito")
             if key in ("amplitude", "noise") and value < 0:
                 raise ValueError(f"{key} debe ser no negativo")
+            if key == "duty" and not 0.01 <= value <= 0.99:
+                raise ValueError("duty debe estar entre 0.01 y 0.99")
             if key == "frequency" and not 0 <= value < 97656.25 / 2:
                 raise ValueError("Frecuencia fuera de la banda de Nyquist")
             settings[key] = value
@@ -190,8 +192,14 @@ class _USBBackend:
             if "frequency" in settings:
                 self.reader.session.send(f"{prefix}FREQ:{settings['frequency']}")
             if "waveform" in settings:
-                wave = {"sine": 0, "square": 1, "triangle": 2}[settings["waveform"]]
-                self.reader.session.send(f"{prefix}WAVE:{wave}")
+                from communication.commands import Waveform
+                wave_name = settings["waveform"]
+                wave = {"sine": 0, "square": 1, "triangle": 2}.get(wave_name)
+                if wave is None:
+                    device.wave[ch] = {"pulse": Waveform.PULSE,
+                                       "dc": Waveform.DC}[wave_name]
+                else:
+                    self.reader.session.send(f"{prefix}WAVE:{wave}")
             # Condiciones sintéticas del ADC, en unidades normalizadas.
             # No son comandos nuevos para la placa física ni calibración del DAC.
             if "amplitude" in settings:
@@ -200,6 +208,8 @@ class _USBBackend:
                 device.offset[ch] = settings["offset"]
             if "noise" in settings:
                 device.noise_channels[ch] = settings["noise"]
+            if "duty" in settings:
+                device.duty[ch] = settings["duty"]
 
         if changed:
             # Descarta bytes y muestras anteriores a los ajustes aplicados.

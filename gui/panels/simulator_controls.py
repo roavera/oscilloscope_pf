@@ -16,7 +16,8 @@ class SimulatorControls(QGroupBox):
         form = QFormLayout()
         self.waveform = QComboBox()
         for label, value in (("Senoidal", "sine"), ("Cuadrada", "square"),
-                             ("Triangular", "triangle")):
+                             ("Triangular", "triangle"), ("Pulso / PWM", "pulse"),
+                             ("Continua (DC)", "dc")):
             self.waveform.addItem(label, value)
         source_row = QHBoxLayout()
         self.channel_enabled = QCheckBox(f"{channel} activo")
@@ -30,10 +31,12 @@ class SimulatorControls(QGroupBox):
         self.amplitude = self._spin(0.0, 3.0, 1.5, 0.05, " V", 3)
         self.offset = self._spin(-3.0, 3.0, 0.0, 0.05, " V", 3)
         self.noise = self._spin(0.0, 3.0, 0.0, 0.005, " V RMS", 3)
+        self.duty = self._spin(1.0, 99.0, 50.0, 1.0, " %", 1)
         form.addRow("Frecuencia:", self.frequency)
         form.addRow("Amplitud pico:", self.amplitude)
         form.addRow("Offset:", self.offset)
         form.addRow("Ruido (σ):", self.noise)
+        form.addRow("Duty PWM:", self.duty)
         layout.addLayout(form)
         info = QLabel(
             "Amplitud, offset y ruido en voltios simulados. ADC virtual ±3 V: "
@@ -43,7 +46,7 @@ class SimulatorControls(QGroupBox):
         layout.addWidget(info)
         self.channel_enabled.toggled.connect(self._emit_settings)
         self.waveform.currentIndexChanged.connect(self._emit_settings)
-        for spin in (self.frequency, self.amplitude, self.offset, self.noise):
+        for spin in (self.frequency, self.amplitude, self.offset, self.noise, self.duty):
             spin.valueChanged.connect(self._emit_settings)
 
     @staticmethod
@@ -58,8 +61,9 @@ class SimulatorControls(QGroupBox):
 
     def _emit_settings(self, *_):
         enabled = self.channel_enabled.isChecked()
-        for control in (self.waveform, self.frequency, self.amplitude, self.offset, self.noise):
+        for control in (self.waveform, self.frequency, self.amplitude, self.offset, self.noise, self.duty):
             control.setEnabled(enabled)
+        self.duty.setEnabled(enabled and self.waveform.currentData() == "pulse")
         self.settings_changed.emit(self.get_settings())
 
     def get_settings(self):
@@ -70,6 +74,7 @@ class SimulatorControls(QGroupBox):
             "amplitude": self.amplitude.value(),
             "offset": self.offset.value(),
             "noise": self.noise.value(),
+            "duty": self.duty.value() / 100.0,
         }
 
 

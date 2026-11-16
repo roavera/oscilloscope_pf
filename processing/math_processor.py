@@ -1,4 +1,4 @@
-"""Suma y resta sobre capturas sincronizadas, antes de acumular resultados."""
+"""Operaciones matemáticas sobre capturas sincronizadas."""
 
 from collections import deque
 from dataclasses import dataclass, replace
@@ -32,8 +32,14 @@ class MathProcessor:
 
     def configure(self, **changes):
         candidate = replace(self.config, **changes)
-        if candidate.operation not in ("add", "subtract"):
-            raise ValueError("Operación no disponible: usar add o subtract")
+        operations = {
+            "add", "subtract", "multiply", "divide",
+            "integrate", "derivative", "abs", "sqrt", "log10", "ln", "exp",
+            "greater", "less", "greater_equal", "less_equal", "equal",
+            "and", "or", "xor",
+        }
+        if candidate.operation not in operations:
+            raise ValueError("Operación matemática no disponible")
         for channel in (candidate.source_a, candidate.source_b):
             if isinstance(channel, (bool, np.bool_)) or not isinstance(channel, (int, np.integer)) or channel not in (1, 2):
                 raise ValueError("Las fuentes deben ser CH1 o CH2")
@@ -41,8 +47,18 @@ class MathProcessor:
 
     @property
     def expression(self):
-        sign = "+" if self.config.operation == "add" else "−"
-        return f"CH{self.config.source_a} {sign} CH{self.config.source_b}"
+        labels = {
+            "add": "+", "subtract": "−", "multiply": "×", "divide": "÷",
+            "greater": ">", "less": "<", "greater_equal": "≥",
+            "less_equal": "≤", "equal": "=", "and": "AND",
+            "or": "OR", "xor": "XOR",
+        }
+        op = self.config.operation
+        if op in labels:
+            return f"CH{self.config.source_a} {labels[op]} CH{self.config.source_b}"
+        names = {"integrate": "∫", "derivative": "d/dt", "abs": "abs",
+                 "sqrt": "√", "log10": "log10", "ln": "ln", "exp": "exp"}
+        return f"{names[op]}(CH{self.config.source_a})"
 
     def evaluate(self, samples, sample_rate):
         data = np.asarray(samples, dtype=np.float32)
@@ -51,10 +67,51 @@ class MathProcessor:
             raise ValueError("MATH requiere muestras finitas sincronizadas (N, 2)")
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
-        a, b = data[:, self.config.source_a-1], data[:, self.config.source_b-1]
+        a = data[:, self.config.source_a - 1].astype(np.float64)
+        b = data[:, self.config.source_b - 1].astype(np.float64)
+        op = self.config.operation
         with np.errstate(over="raise", invalid="raise"):
             try:
-                values = a+b if self.config.operation == "add" else a-b
+                if op == "add":
+                    values = a + b
+                elif op == "subtract":
+                    values = a - b
+                elif op == "multiply":
+                    values = a * b
+                elif op == "divide":
+                    values = np.divide(a, b, out=np.zeros_like(a), where=np.abs(b) > np.finfo(float).eps)
+                elif op == "integrate":
+                    increments = (a[:-1] + a[1:]) * 0.5 / rate
+                    values = np.concatenate(([0.0], np.cumsum(increments)))
+                elif op == "derivative":
+                    values = np.gradient(a, 1.0 / rate)
+                elif op == "abs":
+                    values = np.abs(a)
+                elif op == "sqrt":
+                    values = np.sqrt(np.maximum(a, 0.0))
+                elif op == "log10":
+                    values = np.log10(np.maximum(a, np.finfo(float).tiny))
+                elif op == "ln":
+                    values = np.log(np.maximum(a, np.finfo(float).tiny))
+                elif op == "exp":
+                    values = np.exp(np.clip(a, -700.0, 700.0))
+                elif op == "greater":
+                    values = (a > b).astype(float)
+                elif op == "less":
+                    values = (a < b).astype(float)
+                elif op == "greater_equal":
+                    values = (a >= b).astype(float)
+                elif op == "less_equal":
+                    values = (a <= b).astype(float)
+                elif op == "equal":
+                    values = np.isclose(a, b, rtol=1e-5, atol=1e-8).astype(float)
+                elif op == "and":
+                    values = ((a != 0) & (b != 0)).astype(float)
+                elif op == "or":
+                    values = ((a != 0) | (b != 0)).astype(float)
+                elif op == "xor":
+                    values = ((a != 0) ^ (b != 0)).astype(float)
+                values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
             except FloatingPointError as exc:
                 raise ValueError("El resultado MATH excede el rango numérico") from exc
         return MathResult(np.arange(len(data), dtype=float)/rate, values.copy())

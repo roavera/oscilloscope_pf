@@ -11,18 +11,44 @@ from processing.math_processor import MathTraceProcessor
 class MathTraceMixin:
     """Colabora sobre el estado único inicializado por OscilloscopeWidget."""
 
+    def _math_reference_scale(self, source_a=1, source_b=2, operation="add"):
+        """Obtiene una escala coherente con los canales que alimentan MATH."""
+        scales = getattr(self.plot, "channel_scales", {})
+        scale_a = float(scales.get(int(source_a), self.volts_per_division))
+        scale_b = float(scales.get(int(source_b), self.ch2_volts_per_division))
+        digital = {"greater", "less", "greater_equal", "less_equal", "equal", "and", "or", "xor"}
+        if operation in digital:
+            return 1.0
+        unary = {"abs", "sqrt", "log10", "ln", "exp", "integrate", "derivative"}
+        if operation in unary:
+            return scale_a
+        # Para operaciones entre canales se usa la mayor escala: conserva la
+        # legibilidad aun cuando CH1 y CH2 tengan sensibilidades distintas.
+        return max(scale_a, scale_b)
+
+    def sync_math_scale(self):
+        """Sincroniza la escala MATH después de cambiar CH1 o CH2."""
+        config = self.math_processor.math.config
+        scale = self._math_reference_scale(
+            config.source_a, config.source_b, config.operation
+        )
+        self.controls.math_controls.set_scale_value(scale)
+        self.plot.set_math_settings(scale=scale)
+
     def reset_math_controls(self, _checked=False):
         """Defaults de MATH; los canales y sus acumulaciones se conservan."""
         panel = self.controls.math_controls
         widgets = (panel.scale_combo, panel.position_input, panel.visible_checkbox)
         blockers = [QSignalBlocker(widget) for widget in widgets]
         try:
-            panel.scale_combo.setCurrentIndex(panel.scale_combo.findData(0.02))
+            panel.set_scale_value(self._math_reference_scale(1, 2, "add"))
             panel.position_input.setValue(0.0)
             panel.visible_checkbox.setChecked(False)
         finally:
             del blockers
-        self.plot.set_math_settings(scale=0.02, position=0.0)
+        self.plot.set_math_settings(
+            scale=self._math_reference_scale(1, 2, "add"), position=0.0
+        )
         self.set_math_configuration("add", 1, 2)
         self.set_math_visible(False)
 
@@ -33,9 +59,19 @@ class MathTraceMixin:
 
 
     def set_math_configuration(self, operation, source_a, source_b):
+        source_label = self.voltage_calibration.status(self.acquisition.source)
+        calibrated = self.voltage_calibration.has_volts(self.acquisition.source)
+        self.controls.math_controls.set_units(source_label, calibrated)
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
+        digital = operation in {
+            "greater", "less", "greater_equal", "less_equal", "equal",
+            "and", "or", "xor",
+        }
+        self.controls.math_controls.set_digital_mode(digital)
+        self.plot.set_math_settings(digital=digital)
+        self.sync_math_scale()
         if (self.acquisition_processor.get_mode() == "fastact" and
                 self.last_acquisition is not None):
             result = self.math_processor.math.evaluate(

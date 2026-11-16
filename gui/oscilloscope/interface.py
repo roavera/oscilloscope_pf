@@ -99,8 +99,17 @@ class InterfaceMixin:
         math_controls.visibility_changed.connect(self.set_math_visible)
         math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
         math_controls.position_changed.connect(lambda value: self.plot.set_math_settings(position=value))
+        self.plot.math_position_changed.connect(
+            lambda value: (
+                self.controls.math_controls.position_input.setValue(value),
+                self.plot.set_math_settings(position=value),
+            )
+        )
         self.controls.simulator_settings_changed.connect(
             self._on_simulator_settings_changed
+        )
+        self.controls.measurement_controls.overlay_changed.connect(
+            self.plot.set_measurement_overlay
         )
 
         self.cursor_controls.settings_changed.connect(self.plot.set_cursor_mode)
@@ -108,6 +117,9 @@ class InterfaceMixin:
         self.cursor_controls.labels_visible_changed.connect(self.plot.set_cursor_labels_visible)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
         self.controls.ch2_controls.volts_per_division_changed.connect(self.set_ch2_volts_per_division)
+        self.controls.ch2_controls.volts_per_division_changed.connect(
+            lambda _value: self.sync_math_scale()
+        )
         self.controls.ch2_controls.position_changed.connect(self.set_ch2_position)
         self.plot.ch2_position_changed.connect(self.set_ch2_position)
         for ch, panel in ((1, self.controls.ch1_controls), (2, self.controls.ch2_controls)):
@@ -145,6 +157,9 @@ class InterfaceMixin:
         # Control vertical.
         self.controls.volts_per_division_changed.connect(
             self.set_volts_per_division
+        )
+        self.controls.volts_per_division_changed.connect(
+            lambda _value: self.sync_math_scale()
         )
 
         self.controls.vertical_position_changed.connect(
