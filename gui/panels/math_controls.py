@@ -11,6 +11,7 @@ class MathControls(QGroupBox):
     configuration_changed = Signal(str, int, int)
     visibility_changed = Signal(bool)
     scale_changed = Signal(float)
+    scale_mode_changed = Signal(bool)
     position_changed = Signal(float)
 
     def __init__(self, parent=None):
@@ -41,10 +42,18 @@ class MathControls(QGroupBox):
         form.addRow("Operación:", self.operation_combo)
         form.addRow("Fuente A:", self.source_a_combo)
         form.addRow("Fuente B:", self.source_b_combo)
+        self._unit_suffix = "u.a."
+        self.scale_mode_combo = QComboBox()
+        self.scale_mode_combo.addItem("Automática", True)
+        self.scale_mode_combo.addItem("Manual", False)
+        form.addRow("Ajuste escala:", self.scale_mode_combo)
         self.scale_combo = QComboBox()
-        for value in (5, 2, 1, .5, .2, .1, .05, .02, .01, .005, .002, .001):
-            self.scale_combo.addItem(f"{value:g} u.a./div", float(value))
+        for exponent in range(-9, 10):
+            for mantissa in (1, 2, 5):
+                value = float(mantissa * 10.0 ** exponent)
+                self.scale_combo.addItem(f"{value:g} u.a./div", value)
         self.scale_combo.setCurrentIndex(self.scale_combo.findData(.02))
+        self.scale_combo.setEnabled(False)
         form.addRow("Escala MATH:", self.scale_combo)
         self.position_input = QDoubleSpinBox()
         self.position_input.setRange(-4, 4)
@@ -71,6 +80,7 @@ class MathControls(QGroupBox):
         layout.addWidget(self.status_label)
         self.visible_checkbox.toggled.connect(self.visibility_changed.emit)
         self.category_combo.currentIndexChanged.connect(self._on_category_changed)
+        self.scale_mode_combo.currentIndexChanged.connect(self._on_scale_mode_changed)
         self.scale_combo.currentIndexChanged.connect(
             lambda _index: self.scale_changed.emit(float(self.scale_combo.currentData())))
         self.position_input.valueChanged.connect(self.position_changed.emit)
@@ -92,20 +102,49 @@ class MathControls(QGroupBox):
         self._reload_operations()
         self._emit_configuration()
 
-    def set_units(self, label, calibrated):
+    @property
+    def auto_scale(self):
+        return bool(self.scale_mode_combo.currentData())
+
+    def set_auto_scale(self, enabled):
+        blocker = QSignalBlocker(self.scale_mode_combo)
+        self.scale_mode_combo.setCurrentIndex(self.scale_mode_combo.findData(bool(enabled)))
+        del blocker
+        self.scale_combo.setEnabled(not enabled)
+
+    def _on_scale_mode_changed(self, _index):
+        self.scale_combo.setEnabled(not self.auto_scale)
+        self.scale_mode_changed.emit(self.auto_scale)
+
+    @staticmethod
+    def result_unit(operation, calibrated):
         unit = "V" if calibrated else "u.a."
-        self.units_label.setText(f"Escala: {label} · {unit}/div")
+        if operation in {"greater", "less", "greater_equal", "less_equal", "equal",
+                         "and", "or", "xor", "divide", "log10", "ln", "exp"}:
+            return "1"
+        if operation == "multiply":
+            return f"{unit}²"
+        if operation == "derivative":
+            return f"{unit}/s"
+        if operation == "integrate":
+            return f"{unit}·s"
+        if operation == "sqrt":
+            return f"√({unit})"
+        return unit
+
+    def set_units(self, label, calibrated, operation="add"):
+        self._unit_suffix = self.result_unit(operation, calibrated)
+        if operation in {"greater", "less", "greater_equal", "less_equal", "equal",
+                         "and", "or", "xor"}:
+            self.units_label.setText("Resultado lógico: 0 = bajo · 1 = alto")
+        else:
+            self.units_label.setText(f"Escala MATH: {label} · {self._unit_suffix}/div")
         for index in range(self.scale_combo.count()):
-            value = self.scale_combo.itemData(index)
-            self.scale_combo.setItemText(index, f"{value:g} {unit}/div")
+            value = float(self.scale_combo.itemData(index))
+            self.scale_combo.setItemText(index, f"{value:g} {self._unit_suffix}/div")
 
     def set_digital_mode(self, digital):
-        if digital:
-            self.units_label.setText(
-                "Resultado lógico: 0 = bajo · 1 = alto"
-            )
-        else:
-            self.units_label.setText("Escala: unidades de entrada")
+        self._digital_mode = bool(digital)
 
     def set_scale_value(self, value):
         value = float(value)
