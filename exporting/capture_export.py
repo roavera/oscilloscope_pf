@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import numpy as np
+from processing.math_processor import MathProcessor
 
 
 @dataclass(frozen=True)
@@ -58,10 +59,22 @@ class CaptureArchive:
         return self.visible  # Arrays propios de solo lectura; no se modifican al adquirir.
 
 
-def write_csv(path,captures):
+def write_csv(path,captures,channels=(1, 2),include_math=False,math_config=None):
     """Escritura atómica; un error no deja un CSV parcial ni pisa el anterior."""
     captures=tuple(captures)
     if not captures:raise ValueError('No hay una captura disponible')
+    channels=tuple(ch for ch in (1, 2) if ch in channels)
+    if not channels and not include_math:
+        raise ValueError('Seleccioná al menos CH1, CH2 o MATH')
+    if include_math and math_config is None:
+        raise ValueError('Falta la configuración MATH de esta exportación')
+    processor = None
+    if include_math:
+        processor = MathProcessor()
+        # Copiar el estado de MATH al iniciar la exportación, sin leer la GUI en el hilo.
+        processor.configure(operation=math_config.operation,
+                            source_a=math_config.source_a,
+                            source_b=math_config.source_b)
     path=Path(path)
     temporary=None
     try:
@@ -71,16 +84,32 @@ def write_csv(path,captures):
                            trigger_sample=c.trigger_sample,captured_at_utc=c.captured_at,
                            acquisition_config=json.loads(c.config),sample_count=len(c.samples))
                       for i,c in enumerate(captures)]
-            f.write('# oscilloscope_raw_csv_v1\n')
+            f.write('# oscilloscope_raw_csv_v2\n')
             f.write('# units=normalized; time_reference=trigger_if_available_else_capture_start\n')
+            selection={'channels':list(channels),'include_math':bool(include_math)}
+            if include_math:
+                selection['math']={'operation':math_config.operation,
+                                   'source_a':math_config.source_a,
+                                   'source_b':math_config.source_b,
+                                   'units':'derived_from_normalized_samples'}
+            f.write('# selection='+json.dumps(selection,ensure_ascii=True,separators=(',',':'))+'\n')
             f.write('# captures='+json.dumps(metadata,ensure_ascii=True,separators=(',',':'))+'\n')
             writer=csv.writer(f)
-            writer.writerow(['captura_id','muestra','tiempo_s','ch1_raw','ch2_raw'])
+            columns=['captura_id','muestra','tiempo_s']
+            columns.extend(f'ch{ch}_raw' for ch in channels)
+            if include_math:
+                columns.append('math_raw')
+            writer.writerow(columns)
             for capture_id,c in enumerate(captures):
                 reference=0 if c.trigger_sample is None else c.trigger_sample
-                writer.writerows((capture_id,i,format((i-reference)/c.sample_rate,'.17g'),
-                                  format(float(a),'.9g'),format(float(b),'.9g'))
-                                 for i,(a,b) in enumerate(c.samples))
+                math_values=(processor.evaluate(c.samples,c.sample_rate).values
+                             if include_math else None)
+                for i, pair in enumerate(c.samples):
+                    row=[capture_id,i,format((i-reference)/c.sample_rate,'.17g')]
+                    row.extend(format(float(pair[ch-1]),'.9g') for ch in channels)
+                    if include_math:
+                        row.append(format(float(math_values[i]),'.17g'))
+                    writer.writerow(row)
         os.replace(temporary,path)
         temporary=None
     finally:

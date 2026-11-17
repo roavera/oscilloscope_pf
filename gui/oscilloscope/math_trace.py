@@ -20,6 +20,10 @@ class MathTraceMixin:
         digital = {"greater", "less", "greater_equal", "less_equal", "equal", "and", "or", "xor"}
         if operation in digital:
             return 1.0
+        if operation == "multiply":
+            return scale_a * scale_b
+        if operation == "divide":
+            return scale_a / scale_b
         unary = {"abs", "sqrt", "log10", "ln", "exp", "integrate", "derivative"}
         if operation in unary:
             return scale_a
@@ -27,21 +31,89 @@ class MathTraceMixin:
         # legibilidad aun cuando CH1 y CH2 tengan sensibilidades distintas.
         return max(scale_a, scale_b)
 
-    def sync_math_scale(self):
-        """Sincroniza la escala MATH después de cambiar CH1 o CH2."""
+    @staticmethod
+    def _math_peak(result):
+        if result is None:
+            return 0.0
+        arrays = (result.minimum, result.maximum) if isinstance(result, EnvelopeResult) else (result,)
+        peak = 0.0
+        for array in arrays:
+            values = np.asarray(array, dtype=np.float64)
+            finite = values[np.isfinite(values)]
+            if finite.size:
+                peak = max(peak, float(np.max(np.abs(finite))))
+        return peak
+
+    @staticmethod
+    def _math_auto_scale(result):
+        """Escala 1-2-5: el máximo absoluto ocupa hasta tres divisiones."""
+        peak = MathTraceMixin._math_peak(result)
+        if peak <= 0:
+            return None
+        required = peak / 3.0
+        exponent = np.floor(np.log10(required))
+        base = 10.0 ** exponent
+        for multiplier in (1, 2, 5, 10):
+            scale = float(multiplier * base)
+            if scale >= required:
+                return scale
+        return float(10 * base)
+
+    def _apply_math_scale(self, result=None):
+        """Auto basado en las fuentes cuando la operación lo permite."""
+        # MATH_AUTO_SCALE_RESTANTES_V1
+        panel = self.controls.math_controls
+        if not panel.auto_scale:
+            return
+
         config = self.math_processor.math.config
-        scale = self._math_reference_scale(
-            config.source_a, config.source_b, config.operation
-        )
-        self.controls.math_controls.set_scale_value(scale)
+        operation = config.operation
+        scales = getattr(self.plot, "channel_scales", {})
+        scale_a = float(scales.get(config.source_a, self.volts_per_division))
+
+        # Estas operaciones conservan una relación directa con las escalas
+        # elegidas en los canales, sin depender del pico de la captura.
+        if operation in {"add", "subtract", "multiply", "divide", "abs"}:
+            scale = self._math_reference_scale(
+                config.source_a, config.source_b, operation
+            )
+        elif operation == "sqrt":
+            scale = float(np.sqrt(scale_a))
+        elif self.plot.math_digital:
+            scale = 1.0
+        else:
+            # Derivada, integral, logaritmos y exponencial necesitan el rango
+            # real de la operación, no las unidades/div de la fuente.
+            scale = self._math_auto_scale(result)
+            if scale is None:
+                return
+            # Histéresis exclusivamente dentro de la MISMA operación:
+            # nunca heredar la escala de una función matemática anterior.
+            last_operation = getattr(self, "_math_auto_last_operation", None)
+            current = float(self.plot.math_scale)
+            if last_operation == operation and current > 0:
+                ratio = self._math_peak(result) / current
+                if 1.5 <= ratio <= 3.3:
+                    return
+
+        if not np.isfinite(scale) or scale <= 0:
+            return
+        self._math_auto_last_operation = operation
+        panel.set_scale_value(scale)
         self.plot.set_math_settings(scale=scale)
+
+    def sync_math_scale(self):
+        """No sobrescribir la escala elegida por el usuario en modo Manual."""
+        if self.controls.math_controls.auto_scale:
+            self._apply_math_scale(self.last_math)
 
     def reset_math_controls(self, _checked=False):
         """Defaults de MATH; los canales y sus acumulaciones se conservan."""
         panel = self.controls.math_controls
-        widgets = (panel.scale_combo, panel.position_input, panel.visible_checkbox)
+        widgets = (panel.scale_combo, panel.scale_mode_combo, panel.position_input, panel.visible_checkbox)
         blockers = [QSignalBlocker(widget) for widget in widgets]
         try:
+            panel.set_auto_scale(True)
             panel.set_scale_value(self._math_reference_scale(1, 2, "add"))
             panel.position_input.setValue(FACTORY_DEFAULTS["math_position"])
             panel.visible_checkbox.setChecked(False)
@@ -65,7 +137,7 @@ class MathTraceMixin:
     def set_math_configuration(self, operation, source_a, source_b):
         source_label = self.voltage_calibration.status(self.acquisition.source)
         calibrated = self.voltage_calibration.has_volts(self.acquisition.source)
-        self.controls.math_controls.set_units(source_label, calibrated)
+        self.controls.math_controls.set_units(source_label, calibrated, operation)
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
@@ -74,8 +146,10 @@ class MathTraceMixin:
             "and", "or", "xor",
         }
         self.controls.math_controls.set_digital_mode(digital)
-        self.plot.set_math_settings(digital=digital)
-        self.sync_math_scale()
+        self.plot.set_math_settings(digital=digital, unit=self.controls.math_controls._unit_suffix)
+        self._math_auto_last_operation = None
+        # Auto se actualiza luego, con el resultado de la nueva fórmula.
+
         if (self.acquisition_processor.get_mode() == "fastact" and
                 self.last_acquisition is not None):
             result = self.math_processor.math.evaluate(
@@ -122,10 +196,12 @@ class MathTraceMixin:
             self.plot.clear_math()
         elif isinstance(result, EnvelopeResult):
             self.last_math = deepcopy(result)
+            self._apply_math_scale(self.last_math)
             self.plot.set_math_envelope(result.minimum, result.maximum, display_rate, display_reference,
                                         sample_positions=getattr(result, "sample_positions", None))
         else:
-            self.last_math = np.asarray(result, dtype=np.float32).copy()
+            self.last_math = np.asarray(result, dtype=np.float64).copy()
+            self._apply_math_scale(self.last_math)
             self.plot.set_math_signal(self.last_math, display_rate, display_reference)
         self._update_math_status()
 

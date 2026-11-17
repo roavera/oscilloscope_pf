@@ -1,5 +1,5 @@
 
-"""Panel de cursores Manual y Track para CH1 o CH2."""
+"""Panel de cursores Manual y Track para CH1, CH2 o MATH."""
 
 from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import (
@@ -52,10 +52,11 @@ class CursorControls(QGroupBox):
 
         layout.addLayout(row)
         channel_row = QHBoxLayout()
-        channel_row.addWidget(QLabel("Canal"))
+        channel_row.addWidget(QLabel("Fuente"))
         self.channel = QComboBox()
         self.channel.addItem("CH1", 1)
         self.channel.addItem("CH2", 2)
+        self.channel.addItem("MATH", 3)
         channel_row.addWidget(self.channel, 1)
         layout.addLayout(channel_row)
         self.show_values = QCheckBox("Mostrar valores en gráfico")

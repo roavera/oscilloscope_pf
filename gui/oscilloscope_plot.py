@@ -186,6 +186,7 @@ class OscilloscopePlot(QWidget):
         self.math_position = 0.0
         self.math_digital = False
         self.math_expression = "CH1 + CH2"
+        self.math_unit = "u.a."
         self._math_values = None
         self._math_bounds = None
         self._math_x = np.array([], dtype=float)
@@ -553,7 +554,7 @@ class OscilloscopePlot(QWidget):
         return (np.asarray(value) - self.channel_positions[channel]) * self.channel_scales[channel]
 
     def set_math_settings(self, *, scale=None, position=None, visible=None,
-                          expression=None, digital=None):
+                          expression=None, digital=None, unit=None):
         if scale is not None:
             if not np.isfinite(scale) or scale <= 0:
                 raise ValueError("Escala MATH inválida")
@@ -568,10 +569,12 @@ class OscilloscopePlot(QWidget):
             self.math_expression = str(expression)
         if digital is not None:
             self.math_digital = bool(digital)
+        if unit is not None:
+            self.math_unit = str(unit)
         self._refresh_math()
 
     def set_math_signal(self, values, sample_rate, trigger_sample=None):
-        values = np.asarray(values, dtype=np.float32)
+        values = np.asarray(values, dtype=np.float64)
         if values.ndim != 1 or not np.isfinite(values).all():
             raise ValueError("MATH requiere un vector finito")
         self._math_x = self._signal_time_axis(len(values), sample_rate, trigger_sample)
@@ -621,12 +624,12 @@ class OscilloscopePlot(QWidget):
         self.math_curve.setVisible(self.math_visible and signal)
         for item in (self.math_lower, self.math_upper, self.math_fill):
             item.setVisible(self.math_visible and envelope)
-        unit = "V" if self.voltage_units else "u.a."
-        suffix = " · DIGITAL: 0=Bajo / 1=Alto" if self.math_digital else f" · {self.math_scale:g} {unit}/div"
+        suffix = " · DIGITAL: 0=Bajo / 1=Alto" if self.math_digital else f" · {self.math_scale:g} {self.math_unit}/div"
         self.math_legend.setText(f"MATH = {self.math_expression}{suffix}")
         self.math_legend.setPos(self.horizontal_position, self.vertical_divisions/2 - 0.35)
         self.math_legend.setVisible(self.math_visible and (signal or envelope))
         self._update_math_marker()
+        self._refresh_cursors()
 
     def set_channel_settings(self, channel, *, scale=None, position=None, visible=None):
         if channel not in (1, 2):
@@ -1209,8 +1212,8 @@ class OscilloscopePlot(QWidget):
         self._refresh_cursors()
 
     def set_cursor_channel(self, channel):
-        if channel not in (1, 2):
-            raise ValueError("La referencia de cursores debe ser CH1 o CH2")
+        if channel not in (1, 2, 3):
+            raise ValueError("La referencia de cursores debe ser CH1, CH2 o MATH")
         self.cursor_channel = int(channel)
         self._refresh_cursors()
 
@@ -1266,10 +1269,17 @@ class OscilloscopePlot(QWidget):
             if mode == 'Off':
                 result = 'Cursores desactivados'
             elif is_voltage:
-                a, b = [float(self._from_display(v, channel)) for v in values]
-                result = (f'CH{channel} · C1: {a:+.6g} V    C2: {b:+.6g} V\n'
-                          f'ΔV: {b-a:+.6g} V  |ΔV|: {abs(b-a):.6g} V')
-                texts = [f'C{i+1} · CH{channel}: {v:+.6g} V' for i, v in enumerate((a, b))]
+                if channel == 3:
+                    unit = self.math_unit
+                    name = "MATH"
+                    a, b = [(v - self.math_position) * self.math_scale for v in values]
+                else:
+                    unit = "V" if self.voltage_units else "u.a."
+                    name = f"CH{channel}"
+                    a, b = [float(self._from_display(v, channel)) for v in values]
+                result = (f'{name} · C1: {a:+.6g} {unit}    C2: {b:+.6g} {unit}\n'
+                          f'Δ: {b-a:+.6g} {unit}  |Δ|: {abs(b-a):.6g} {unit}')
+                texts = [f'C{i+1} · {name}: {v:+.6g} {unit}' for i, v in enumerate((a, b))]
             elif mode == 'Manual':
                 a, b = values
                 dt = b-a
@@ -1278,31 +1288,43 @@ class OscilloscopePlot(QWidget):
                 if abs(dt) > 1e-15:
                     result += f'    1/|Δt|: {1/abs(dt):.6g} Hz'
             else:
-                x = self._cursor_signal_x
-                y = (self._raw_channels[:, channel-1] if self._raw_channels is not None
-                     else np.array([], dtype=float))
+                if channel == 3:
+                    x = self._math_x
+                    y = (self._math_values if self._math_values is not None
+                         else np.array([], dtype=float))
+                    name = "MATH"
+                    unit = self.math_unit
+                    has_envelope = self._math_bounds is not None
+                else:
+                    x = self._cursor_signal_x
+                    y = (self._raw_channels[:, channel-1] if self._raw_channels is not None
+                         else np.array([], dtype=float))
+                    name = f"CH{channel}"
+                    unit = "V" if self.voltage_units else "u.a."
+                    has_envelope = self._raw_envelope is not None
                 if x.size < 2 or y.size != x.size:
-                    result = (f'Track no disponible en {getattr(self, "_bounds_label", "Envolvente")}: hay dos límites por intervalo'
-                              if self._raw_envelope is not None
-                              else f'Track: esperando muestras de CH{channel}')
+                    result = (f'Track no disponible en {name}: hay dos límites por intervalo'
+                              if has_envelope else f'Track: esperando muestras de {name}')
                     for point in self.cursor_points:
                         point.setData([], [])
                 else:
                     for i, t in enumerate(values):
                         if x[0] <= t <= x[-1]:
                             v = float(np.interp(t, x, y))
-                            self.cursor_points[i].setData([t], [float(self._to_display(v, channel))])
+                            y_display = (v / self.math_scale + self.math_position
+                                         if channel == 3 else float(self._to_display(v, channel)))
+                            self.cursor_points[i].setData([t], [y_display])
                             track_samples[i] = v
-                            texts[i] = f'C{i+1} · CH{channel}\nt={t:.6g} s\nV={v:+.6g} V'
+                            texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\n{unit}: {v:+.6g}'
                         else:
                             self.cursor_points[i].setData([], [])
-                            texts[i] = f'C{i+1} · CH{channel}\nt={t:.6g} s\nFuera de captura'
+                            texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\nFuera de captura'
                     if all(v is not None for v in track_samples):
                         a, b = values
                         va, vb = track_samples
-                        result = (f'CH{channel} · C1: t={a:.6g} s, V={va:+.6g} V\n'
-                                  f'C2: t={b:.6g} s, V={vb:+.6g} V\n'
-                                  f'Δt={b-a:+.6g} s   ΔV={vb-va:+.6g} V')
+                        result = (f'{name} · C1: t={a:.6g} s, {unit}={va:+.6g}\n'
+                                  f'C2: t={b:.6g} s, {unit}={vb:+.6g}\n'
+                                  f'Δt={b-a:+.6g} s   Δ={vb-va:+.6g} {unit}')
                     else:
                         result = 'Track: cursor fuera del tramo adquirido'
             for i, label in enumerate(self.cursor_labels):
@@ -1316,7 +1338,8 @@ class OscilloscopePlot(QWidget):
                     label.setAnchor((1 if right else 0, 0))
                     x_label = values[i] + (-.012 if right else .012)*(xmax-xmin)
                     if mode == 'Track' and track_samples[i] is not None:
-                        y_display = float(self._to_display(track_samples[i], channel))
+                        y_display = (track_samples[i] / self.math_scale + self.math_position
+                                     if channel == 3 else float(self._to_display(track_samples[i], channel)))
                         y_label = float(np.clip(y_display+.65, ymin+.9, ymax-.65))
                     else:
                         y_label = ymax-.7-.45*i
