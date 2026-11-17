@@ -27,21 +27,62 @@ class MathTraceMixin:
         # legibilidad aun cuando CH1 y CH2 tengan sensibilidades distintas.
         return max(scale_a, scale_b)
 
-    def sync_math_scale(self):
-        """Sincroniza la escala MATH después de cambiar CH1 o CH2."""
-        config = self.math_processor.math.config
-        scale = self._math_reference_scale(
-            config.source_a, config.source_b, config.operation
-        )
-        self.controls.math_controls.set_scale_value(scale)
+    @staticmethod
+    def _math_peak(result):
+        if result is None:
+            return 0.0
+        arrays = (result.minimum, result.maximum) if isinstance(result, EnvelopeResult) else (result,)
+        peak = 0.0
+        for array in arrays:
+            finite = np.asarray(array, dtype=np.float64)
+            finite = finite[np.isfinite(finite)]
+            if finite.size:
+                peak = max(peak, float(np.max(np.abs(finite))))
+        return peak
+
+    @staticmethod
+    def _math_auto_scale(result):
+        peak = MathTraceMixin._math_peak(result)
+        if peak <= 0:
+            return None
+        required = peak / 3.0
+        exponent = np.floor(np.log10(required))
+        base = 10.0 ** exponent
+        for mantissa in (1, 2, 5, 10):
+            scale = float(mantissa * base)
+            if scale >= required:
+                return scale
+        return float(10 * base)
+
+    def _apply_math_scale(self, result=None):
+        panel = self.controls.math_controls
+        if not panel.auto_scale:
+            return
+        if self.plot.math_digital:
+            scale = 1.0
+        else:
+            scale = self._math_auto_scale(result)
+            if scale is None:
+                return
+            current = self.plot.math_scale
+            ratio = self._math_peak(result) / current
+            if 1.5 <= ratio <= 3.3:
+                return
+        panel.set_scale_value(scale)
         self.plot.set_math_settings(scale=scale)
+
+    def sync_math_scale(self):
+        """No sobrescribir la escala MATH elegida manualmente."""
+        if self.controls.math_controls.auto_scale:
+            self._apply_math_scale(self.last_math)
 
     def reset_math_controls(self, _checked=False):
         """Defaults de MATH; los canales y sus acumulaciones se conservan."""
         panel = self.controls.math_controls
-        widgets = (panel.scale_combo, panel.position_input, panel.visible_checkbox)
+        widgets = (panel.scale_combo, panel.scale_mode_combo, panel.position_input, panel.visible_checkbox)
         blockers = [QSignalBlocker(widget) for widget in widgets]
         try:
+            panel.set_auto_scale(True)
             panel.set_scale_value(self._math_reference_scale(1, 2, "add"))
             panel.position_input.setValue(FACTORY_DEFAULTS["math_position"])
             panel.visible_checkbox.setChecked(False)
@@ -65,7 +106,7 @@ class MathTraceMixin:
     def set_math_configuration(self, operation, source_a, source_b):
         source_label = self.voltage_calibration.status(self.acquisition.source)
         calibrated = self.voltage_calibration.has_volts(self.acquisition.source)
-        self.controls.math_controls.set_units(source_label, calibrated)
+        self.controls.math_controls.set_units(source_label, calibrated, operation)
         result = self.math_processor.configure_math(
             operation=operation, source_a=source_a, source_b=source_b,
         )
@@ -74,7 +115,7 @@ class MathTraceMixin:
             "and", "or", "xor",
         }
         self.controls.math_controls.set_digital_mode(digital)
-        self.plot.set_math_settings(digital=digital)
+        self.plot.set_math_settings(digital=digital, unit=self.controls.math_controls._unit_suffix)
         self.sync_math_scale()
         if (self.acquisition_processor.get_mode() == "fastact" and
                 self.last_acquisition is not None):
@@ -122,10 +163,12 @@ class MathTraceMixin:
             self.plot.clear_math()
         elif isinstance(result, EnvelopeResult):
             self.last_math = deepcopy(result)
+            self._apply_math_scale(self.last_math)
             self.plot.set_math_envelope(result.minimum, result.maximum, display_rate, display_reference,
                                         sample_positions=getattr(result, "sample_positions", None))
         else:
-            self.last_math = np.asarray(result, dtype=np.float32).copy()
+            self.last_math = np.asarray(result, dtype=np.float64).copy()
+            self._apply_math_scale(self.last_math)
             self.plot.set_math_signal(self.last_math, display_rate, display_reference)
         self._update_math_status()
 
