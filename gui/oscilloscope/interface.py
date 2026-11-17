@@ -101,6 +101,7 @@ class InterfaceMixin:
         math_controls.configuration_changed.connect(self.set_math_configuration)
         math_controls.visibility_changed.connect(self.set_math_visible)
         math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
+        math_controls.scale_mode_changed.connect(lambda automatic: self.sync_math_scale() if automatic else None)
         math_controls.position_changed.connect(lambda value: self.plot.set_math_settings(position=value))
         self.controls.filter_controls.configuration_changed.connect(
             self.set_filter_configuration
