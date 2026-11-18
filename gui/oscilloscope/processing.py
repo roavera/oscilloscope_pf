@@ -2,12 +2,15 @@
 """Selección de capturas, modos de adquisición y archivo de muestras originales."""
 
 from time import monotonic
+from dataclasses import replace
 import numpy as np
 from acquisition.modes.envelope import EnvelopeResult
 from acquisition.modes.peak_detect import PeakDetectResult
 from acquisition.modes.high_resolution import effective_high_resolution_factor
 from exporting.capture_export import raw_capture
 from processing.filters import FilterConfig, apply_filter
+from processing.stream_filter import ContinuousButterworth
+from acquisition.stereo_buffer import StereoBuffer
 
 
 class ProcessingMixin:
@@ -63,6 +66,7 @@ class ProcessingMixin:
             )
             return
         self.filter_config = candidate
+        self._reset_continuous_filter()
         if candidate.enabled:
             self.controls.filter_controls.status_label.setText(
                 f"Activo: {candidate.kind} · {candidate.channel} · desde la próxima captura"
@@ -164,6 +168,57 @@ class ProcessingMixin:
         self.update_controls_state()
 
 
+    def _reset_continuous_filter(self):
+        """Descarta estados y buffer procesado; RAW y su contador se conservan."""
+        self._continuous_iir = ContinuousButterworth()
+        self._filtered_buffer = None
+        self._filtered_signature = None
+
+    def _continuous_filter_view(self, calibrated, first_sample, total):
+        """Obtiene un tramo filtrado alineado a los indices absolutos RAW.
+
+        Filtra solo el sufijo nuevo; la porcion solapada se lee del buffer
+        filtrado. Un salto/discontinuidad reinicia el estado SOS.
+        """
+        signature = (float(self.sample_rate), self.acquisition.source, self.filter_config)
+        if (getattr(self, '_filtered_signature', None) != signature or
+                getattr(self, '_filtered_buffer', None) is None):
+            self._reset_continuous_filter()
+            self._filtered_signature = signature
+            self._filtered_buffer = StereoBuffer(self.buffer.size)
+            self._filtered_buffer.total_samples = int(first_sample)
+        cache = self._filtered_buffer
+        earliest = cache.total_samples - cache.valid_samples
+        if first_sample < earliest or first_sample > cache.total_samples or total < cache.total_samples:
+            self._reset_continuous_filter()
+            self._filtered_signature = signature
+            self._filtered_buffer = StereoBuffer(self.buffer.size)
+            self._filtered_buffer.total_samples = int(first_sample)
+            cache = self._filtered_buffer
+        start = cache.total_samples
+        if total > start:
+            new_data = calibrated[start - first_sample:]
+            filtered = self._continuous_iir.process(new_data, self.sample_rate, self.filter_config)
+            cache.add_samples(filtered)
+        view = cache.get_data(len(calibrated))
+        if len(view) != len(calibrated):
+            raise RuntimeError('Desalineacion entre buffer RAW y buffer filtrado')
+        return view
+
+    def _filtered_capture_iterator(self, captures, filtered_view, first_sample):
+        """Capturas disparadas sobre RAW, pero con muestras filtradas alineadas."""
+        for capture in captures:
+            before = int(capture.trigger_sample)
+            fraction = float(capture.raw_trigger_sample - before)
+            start = int(capture.trigger_id - before - first_sample)
+            count = len(capture.samples)
+            segment = filtered_view[start:start + count + 1]
+            if start < 0 or len(segment) != count + 1:
+                raise RuntimeError('Captura filtrada fuera del tramo procesado')
+            aligned = ((1.0 - fraction) * segment[:-1] +
+                       fraction * segment[1:]).astype(np.float32)
+            yield replace(capture, samples=aligned)
+
     def process_data(self):
         # Incluso una señal timeout ya encolada debe respetar STOP.
         if self._closed or not self.running:
@@ -174,6 +229,7 @@ class ProcessingMixin:
             discontinuity = self._pending_discontinuity
             self._pending_discontinuity = False
         if discontinuity:
+            self._reset_continuous_filter()
             self._clear_trigger_history(preserve_display=True)
             self.update_controls_state()
 
@@ -203,12 +259,13 @@ class ProcessingMixin:
         # Una sola conversión RAW -> V antes de trigger, modos y MATH.
         # El búfer retiene siempre los float32 PCM24 originales.
         data = self.voltage_calibration.apply(raw_data, self.acquisition.source)
+        filtered_data = self._continuous_filter_view(data, first_sample, total)
 
         if mode == "roll":
             if roll_lost:
                 self._reset_roll_history()  # Evita unir bloques con saltos.
             if len(data):
-                self._process_roll_data(data)
+                self._process_roll_data(filtered_data)
             return
 
         if len(data) < self.display_samples:
@@ -222,11 +279,13 @@ class ProcessingMixin:
             return
 
         if mode == "fastact":
-            self._process_fastact_captures(data, first_sample, raw_data=raw_data)
+            self._process_fastact_captures(
+                data, first_sample, raw_data=raw_data, filtered_data=filtered_data)
             return
 
         if self.acquisition_processor.get_mode() in ("average", "envelope"):
-            self._process_triggered_captures(data, first_sample, raw_data=raw_data)
+            self._process_triggered_captures(
+                data, first_sample, raw_data=raw_data, filtered_data=filtered_data)
             return
 
         # Detector compartido por Sampling, Peak Detect y High Resolution.
@@ -298,7 +357,8 @@ class ProcessingMixin:
 
             acquisition = data[-self.display_samples:].copy()
             self._show_acquisition(
-                acquisition, raw_acquisition=raw_data[-self.display_samples:].copy()
+                acquisition, raw_acquisition=raw_data[-self.display_samples:].copy(),
+                filtered_acquisition=filtered_data[-self.display_samples:].copy()
             )
 
         else:
@@ -329,6 +389,8 @@ class ProcessingMixin:
                 acquisition,
                 trigger_sample=trigger_sample,
                 raw_acquisition=raw_acquisition,
+                filtered_acquisition=self.trigger.capture(
+                    filtered_data, trigger_index, self.display_samples),
             )
 
             if self.trigger_mode == "Single":
@@ -339,14 +401,17 @@ class ProcessingMixin:
         self.update_controls_state()
 
 
-    def _process_triggered_captures(self, data, first_sample, raw_data=None):
+    def _process_triggered_captures(self, data, first_sample, raw_data=None, filtered_data=None):
         """Acumula un lote acotado por tick; Auto no mezcla barridos libres."""
         if self._pending_captures is None:
-            self._pending_captures = self.capture_sequence.captures(
+            captures = self.capture_sequence.captures(
                 data, first_sample, self.display_samples, self.trigger, self.trigger_channel,
                 raw_data=raw_data,
                 holdoff=self.trigger_holdoff, sample_rate=self.sample_rate,
             )
+            if filtered_data is not None:
+                captures = self._filtered_capture_iterator(captures, filtered_data, first_sample)
+            self._pending_captures = captures
         result = None
         reference = None
         self.trigger_found = False
@@ -355,7 +420,7 @@ class ProcessingMixin:
             if capture is None:
                 self._pending_captures = None
                 break
-            result = self._process_acquisition(capture.samples)
+            result = self._process_acquisition(capture.samples, already_filtered=True)
             self._archive_raw(capture.raw_samples, capture.raw_trigger_sample)
             reference = capture.trigger_sample
             self.trigger_found = True
@@ -377,14 +442,15 @@ class ProcessingMixin:
         self.capture_archive.add(capture, target)
 
 
-    def _process_acquisition(self, acquisition):
+    def _process_acquisition(self, acquisition, *, already_filtered=False):
         self._last_high_resolution_factor = (
             effective_high_resolution_factor(
                 len(acquisition), self.acquisition_processor.get_high_resolution_factor()
             )
             if self.acquisition_processor.get_mode() == "high_resolution" else 1
         )
-        filtered = apply_filter(acquisition, self.sample_rate, self.filter_config)
+        filtered = (acquisition if already_filtered else
+                    apply_filter(acquisition, self.sample_rate, self.filter_config))
         results = [
             self.acquisition_processor.process(filtered[:, ch - 1], channel=ch)
             for ch in (1, 2)
@@ -412,7 +478,7 @@ class ProcessingMixin:
         return np.column_stack(results)
 
 
-    def _show_acquisition(self, acquisition, trigger_sample=None, *, raw_acquisition=None):
+    def _show_acquisition(self, acquisition, trigger_sample=None, *, raw_acquisition=None, filtered_acquisition=None):
         """
         Procesa y representa una captura del osciloscopio.
 
@@ -420,7 +486,9 @@ class ProcessingMixin:
         El procesador aplica el modo de adquisición activo.
         """
 
-        processed = self._process_acquisition(acquisition)
+        processed = self._process_acquisition(
+            acquisition if filtered_acquisition is None else filtered_acquisition,
+            already_filtered=filtered_acquisition is not None)
         self._archive_raw(
             acquisition if raw_acquisition is None else raw_acquisition,
             trigger_sample,

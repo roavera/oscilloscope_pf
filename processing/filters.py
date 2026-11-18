@@ -1,7 +1,13 @@
-"""Filtros digitales sencillos para las capturas del osciloscopio."""
+"""Filtros Butterworth IIR digitales para capturas del osciloscopio.
 
+Etapa 1: cada captura se filtra de manera independiente con SOS. No se
+mantiene estado entre capturas; para filtrado continuo real se debe filtrar
+el flujo ANTES de construir capturas solapadas.
+"""
 from dataclasses import dataclass
+from functools import lru_cache
 import numpy as np
+from scipy.signal import butter, sosfilt, sosfilt_zi
 
 
 @dataclass(frozen=True)
@@ -15,48 +21,69 @@ class FilterConfig:
 
 
 FILTER_KINDS = ("lowpass", "highpass", "bandpass", "bandstop")
+CHANNELS = ("both", "ch1", "ch2")
 
 
-def _response(frequencies, config):
-    order = max(1, int(config.order))
-    eps = np.finfo(float).eps
-    low = max(float(config.cutoff_low), eps)
-    high = max(float(config.cutoff_high), eps)
-    low_ratio = frequencies / low
-    high_ratio = high / np.maximum(frequencies, eps)
-    lowpass = 1.0 / np.sqrt(1.0 + low_ratio ** (2 * order))
+def _parameters(rate, config):
+    """Valida parámetros físicos sin recortar silenciosamente frecuencias."""
+    rate = float(rate)
+    if not np.isfinite(rate) or rate <= 0:
+        raise ValueError("Frecuencia de muestreo inválida")
+    if config.kind not in FILTER_KINDS:
+        raise ValueError("Tipo de filtro no disponible")
+    if config.channel not in CHANNELS:
+        raise ValueError("Canal de filtrado inválido")
+    order = int(config.order)
+    if order != config.order or not 1 <= order <= 16:
+        raise ValueError("El orden del filtro debe ser entero entre 1 y 16")
+    low, high = float(config.cutoff_low), float(config.cutoff_high)
+    if not np.isfinite(low) or not np.isfinite(high):
+        raise ValueError("Frecuencias de corte no finitas")
+    nyquist = rate / 2.0
     if config.kind == "lowpass":
-        return lowpass
-    highpass = 1.0 / np.sqrt(1.0 + high_ratio ** (2 * order))
-    if config.kind == "highpass":
-        highpass[0] = 0.0
-        return highpass
-    bandpass = lowpass * highpass
-    return bandpass if config.kind == "bandpass" else 1.0 - bandpass
+        cutoff = low
+    elif config.kind == "highpass":
+        cutoff = high
+    else:
+        if high <= low:
+            raise ValueError("La frecuencia superior debe ser mayor que la inferior")
+        cutoff = (low, high)
+    values = (cutoff,) if isinstance(cutoff, float) else cutoff
+    if not all(0 < value < nyquist for value in values):
+        raise ValueError(f"Los cortes deben estar entre 0 y Nyquist ({nyquist:g} Hz), sin incluir los extremos")
+    return rate, order, cutoff
+
+
+@lru_cache(maxsize=64)
+def _design(rate, kind, order, cutoff):
+    """SciPy diseña el IIR digital (transformación bilineal) en secciones SOS."""
+    return butter(order, cutoff, btype=kind, fs=rate, output="sos")
+
+
+def design_filter(sample_rate, config):
+    """Expone coeficientes SOS para graficar o verificar la respuesta."""
+    rate, order, cutoff = _parameters(sample_rate, config)
+    return _design(rate, config.kind, order, cutoff).copy()
 
 
 def apply_filter(samples, sample_rate, config):
-    """Filtra cada canal por separado mediante una respuesta Butterworth FFT."""
+    """Filtra cada captura independientemente; entrada/salida (N, 2)."""
     data = np.asarray(samples, dtype=np.float32)
     if data.ndim != 2 or data.shape[1] != 2:
         raise ValueError("El filtro requiere una captura con forma (N, 2)")
-    rate = float(sample_rate)
-    if not np.isfinite(rate) or rate <= 0:
+    if not np.isfinite(data).all():
+        raise ValueError("La captura contiene muestras no finitas")
+    if not np.isfinite(float(sample_rate)) or float(sample_rate) <= 0:
         raise ValueError("Frecuencia de muestreo inválida")
-    if not config.enabled or len(data) < 4:
+    if not config.enabled or len(data) == 0:
         return data.copy()
-    if config.kind not in FILTER_KINDS:
-        raise ValueError("Tipo de filtro no disponible")
-    nyquist = rate / 2.0
-    low = float(np.clip(config.cutoff_low, 1e-6, nyquist))
-    high = float(np.clip(config.cutoff_high, 1e-6, nyquist))
-    if config.kind in ("bandpass", "bandstop") and high <= low:
-        raise ValueError("La frecuencia superior debe ser mayor que la inferior")
-    safe = FilterConfig(True, config.kind, config.channel, low, high, config.order)
-    response = _response(np.fft.rfftfreq(len(data), d=1.0 / rate), safe)
+    sos = design_filter(sample_rate, config)
     result = data.astype(np.float64, copy=True)
-    channels = (0, 1) if config.channel == "both" else ((0,) if config.channel == "ch1" else (1,))
-    for index in channels:
-        spectrum = np.fft.rfft(result[:, index])
-        result[:, index] = np.fft.irfft(spectrum * response, n=len(data))
-    return np.asarray(result, dtype=np.float32)
+    selected = (0, 1) if config.channel == "both" else (0,) if config.channel == "ch1" else (1,)
+    # Inicialización estacionaria para reducir el transitorio inicial en
+    # capturas recortadas. No reemplaza un estado entre bloques continuos.
+    zi = sosfilt_zi(sos)
+    for index in selected:
+        initial_state = zi * result[0, index]
+        result[:, index], _ = sosfilt(sos, result[:, index], zi=initial_state)
+    return result.astype(np.float32)

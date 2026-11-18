@@ -30,16 +30,19 @@ class FastActMixin:
         self._last_high_resolution_factor = 1
         self.plot.clear_fastact()
 
-    def _process_fastact_captures(self, data, first_sample, raw_data=None):
+    def _process_fastact_captures(self, data, first_sample, raw_data=None, filtered_data=None):
         """Procesa un lote limitado; los eventos se deduplican por ID absoluto."""
         if self._fastact_density is None:
             self._reset_fastact()
         if self._pending_captures is None and data is not None:
-            self._pending_captures = self.capture_sequence.captures(
+            captures = self.capture_sequence.captures(
                 data, first_sample, self.display_samples, self.trigger,
                 self.trigger_channel, raw_data=raw_data,
                 holdoff=self.trigger_holdoff, sample_rate=self.sample_rate,
             )
+            if filtered_data is not None:
+                captures = self._filtered_capture_iterator(captures, filtered_data, first_sample)
+            self._pending_captures = captures
 
         now = monotonic()
         self._fastact_density.fade(max(0.0, now - self._fastact_last_refresh))
