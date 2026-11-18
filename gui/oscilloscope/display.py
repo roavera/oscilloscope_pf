@@ -94,7 +94,12 @@ class DisplayMixin:
         # el resultado reducido nunca vuelve a reducirse.
         if self.acquisition_processor.get_mode() == "high_resolution":
             data = self._last_display_buffer
+            processed_data = getattr(self, "_last_filtered_display_buffer", None)
             if data is None or len(data) < self.display_samples:
+                return
+            # Reusar las muestras filtradas CONTINUAMENTE, no filtrar de nuevo
+            # un recorte de RAW (lo que reiniciaría las condiciones SOS).
+            if processed_data is None or len(processed_data) != len(data):
                 return
             if self._last_trigger_index is not None:
                 raw = self.trigger.capture(
@@ -109,8 +114,16 @@ class DisplayMixin:
             else:
                 raw = data[-self.display_samples:].copy()
                 trigger_sample = None
+            if self._last_trigger_index is not None:
+                filtered_recut = self.trigger.capture(
+                    processed_data, self._last_trigger_index, self.display_samples)
+            else:
+                filtered_recut = processed_data[-self.display_samples:].copy()
+            if filtered_recut is None or len(filtered_recut) != len(raw):
+                return
             self._show_acquisition(
                 raw, trigger_sample, raw_acquisition=self._latest_raw_recut(),
+                filtered_acquisition=filtered_recut,
             )
             return
 

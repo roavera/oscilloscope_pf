@@ -208,6 +208,7 @@ class AcquisitionMixin:
             self.buffer.clear()
             self._new_data = False
         self._reset_processing()
+        self._reset_continuous_filter()
         self.update_controls_state()
 
 
@@ -228,6 +229,7 @@ class AcquisitionMixin:
             self._pending_discontinuity = False
             self._new_data = False
         self._reset_processing()
+        self._reset_continuous_filter()
         self.plot.set_calibration_label(
             self.voltage_calibration.status(self.acquisition.source),
             in_volts=self.voltage_calibration.has_volts(self.acquisition.source),
@@ -341,6 +343,7 @@ class AcquisitionMixin:
         with self._buffer_lock:
             self.buffer.clear()
             self._new_data = False
+        self._reset_continuous_filter()
 
         self.running = True
         self.display_timer.start()

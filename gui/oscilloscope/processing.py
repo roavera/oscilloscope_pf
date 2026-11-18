@@ -8,7 +8,7 @@ from acquisition.modes.envelope import EnvelopeResult
 from acquisition.modes.peak_detect import PeakDetectResult
 from acquisition.modes.high_resolution import effective_high_resolution_factor
 from exporting.capture_export import raw_capture
-from processing.filters import FilterConfig, apply_filter
+from processing.filters import FilterConfig, apply_filter, design_filter
 from processing.stream_filter import ContinuousButterworth
 from acquisition.stereo_buffer import StereoBuffer
 
@@ -65,6 +65,12 @@ class ProcessingMixin:
                 "Error: el corte superior debe ser mayor que el inferior"
             )
             return
+        if candidate.enabled:
+            try:
+                design_filter(self.sample_rate, candidate)
+            except (ValueError, TypeError) as exc:
+                self.controls.filter_controls.status_label.setText(f"Error: {exc}")
+                return
         self.filter_config = candidate
         self._reset_continuous_filter()
         if candidate.enabled:
@@ -173,6 +179,8 @@ class ProcessingMixin:
         self._continuous_iir = ContinuousButterworth()
         self._filtered_buffer = None
         self._filtered_signature = None
+        # El histórico filtrado anterior ya no representa al flujo nuevo.
+        self._last_filtered_display_buffer = None
 
     def _continuous_filter_view(self, calibrated, first_sample, total):
         """Obtiene un tramo filtrado alineado a los indices absolutos RAW.
@@ -351,6 +359,7 @@ class ProcessingMixin:
             self._auto_free_running = True
             # Auto sin disparo.
             self._last_display_buffer = data
+            self._last_filtered_display_buffer = filtered_data.copy()
             self._last_raw_display_buffer = raw_data
             self._last_trigger_index = None
             self._last_fractional_offset = 0.0
@@ -371,6 +380,7 @@ class ProcessingMixin:
             # Guarda el contexto del disparo para poder volver
             # a recortar esta adquisición sin buscar otro cruce.
             self._last_display_buffer = data
+            self._last_filtered_display_buffer = filtered_data.copy()
             self._last_raw_display_buffer = raw_data
             self._last_trigger_index = trigger_index
             self._last_fractional_offset = (
