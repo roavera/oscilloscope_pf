@@ -1,11 +1,11 @@
-"""Trigger por flanco con configuración no modal y nivel editable."""
+"""Controles de disparo con ajustes específicos por tipo y nivel editable."""
 
 from math import isfinite
 
 from PySide6.QtCore import Signal, QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
+    QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
 )
 
 from gui.widgets.position_knob import LevelKnob
@@ -34,6 +34,7 @@ class TriggerControls(QGroupBox):
         self.create_interface()
         self.connect_signals()
         self._refresh_level_knob()
+        self._update_pulse_width_ui()
 
     def create_interface(self):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -154,11 +155,17 @@ class TriggerControls(QGroupBox):
 
         # Se reutiliza el diálogo: cerrar y reabrir conserva la selección.
         self.settings_dialog = QDialog(self)
-        self.settings_dialog.setWindowTitle("Configuración de trigger")
+        self.settings_dialog.setWindowTitle("Trigger")
         self.settings_dialog.setModal(False)
-        self.settings_dialog.setMinimumWidth(330)
         dialog_layout = QVBoxLayout(self.settings_dialog)
-        form = QFormLayout()
+        dialog_layout.setContentsMargins(16, 16, 16, 16)
+        dialog_layout.setSpacing(12)
+        dialog_layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        type_group = QGroupBox("Tipo de disparo")
+        type_group.setMinimumWidth(368)
+        type_layout = QVBoxLayout(type_group)
+        type_layout.setSpacing(12)
+        self.type_form = QFormLayout()
 
         self.type_combo = QComboBox()
         self.type_combo.addItem("Flanco", "edge")
@@ -166,7 +173,10 @@ class TriggerControls(QGroupBox):
         self.type_combo.addItem("Timeout", "timeout")
         self.type_combo.addItem("Runt", "runt")
         self.type_combo.addItem("Logic CH1/CH2", "logic")
-        form.addRow("Tipo de disparo:", self.type_combo)
+        self.type_combo.setAccessibleName("Tipo de disparo")
+        type_layout.addWidget(self.type_combo)
+        type_layout.addLayout(self.type_form)
+        dialog_layout.addWidget(type_group)
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Auto", "Auto")
@@ -190,18 +200,16 @@ class TriggerControls(QGroupBox):
             "Tiempo minimo entre disparos aceptados. 0 ms = desactivado. "
             "No depende del tiempo de actualizacion de pantalla."
         )
-        form.addRow("Holdoff:", self.holdoff_spin)
 
         self.slope_combo = QComboBox()
         self.slope_combo.addItem("Ascendente", "Rising")
         self.slope_combo.addItem("Descendente", "Falling")
-        form.addRow("Flanco:", self.slope_combo)
-        dialog_layout.addLayout(form)
+        self.type_form.addRow("Flanco:", self.slope_combo)
 
         # Configuracion especifica de Pulse Width; no ocupa sitio en la
         # pantalla principal y no interfiere con el control Holdoff.
         self.pulse_group = QGroupBox("Ancho de pulso", self.settings_dialog)
-        pulse_form = QFormLayout(self.pulse_group)
+        self.pulse_form = pulse_form = QFormLayout(self.pulse_group)
         self.pulse_polarity = QComboBox()
         self.pulse_polarity.addItem("Alto (HIGH)", "high")
         self.pulse_polarity.addItem("Bajo (LOW)", "low")
@@ -212,7 +220,7 @@ class TriggerControls(QGroupBox):
         self.pulse_comparison.addItem("Menor que (<)", "less")
         self.pulse_comparison.addItem("Dentro del rango", "within")
         self.pulse_comparison.addItem("Fuera del rango", "outside")
-        pulse_form.addRow("Condicion:", self.pulse_comparison)
+        pulse_form.addRow("Condición:", self.pulse_comparison)
 
         self.pulse_lower = QDoubleSpinBox()
         self.pulse_lower.setRange(0.0, 1_000_000.0)
@@ -222,7 +230,7 @@ class TriggerControls(QGroupBox):
         self.pulse_lower.setSuffix(" µs")
         self.pulse_lower.setKeyboardTracking(False)
         self.pulse_lower.setToolTip("Umbral o limite inferior, expresado en microsegundos")
-        pulse_form.addRow("Ancho A:", self.pulse_lower)
+        pulse_form.addRow("Duración:", self.pulse_lower)
 
         self.pulse_upper = QDoubleSpinBox()
         self.pulse_upper.setRange(0.0, 1_000_000.0)
@@ -232,15 +240,9 @@ class TriggerControls(QGroupBox):
         self.pulse_upper.setSuffix(" µs")
         self.pulse_upper.setKeyboardTracking(False)
         self.pulse_upper.setToolTip("Limite superior para Dentro/Fuera del rango")
-        pulse_form.addRow("Ancho B:", self.pulse_upper)
+        pulse_form.addRow("Máximo:", self.pulse_upper)
 
-        pulse_note = QLabel(
-            "El disparo se confirma al FINAL del pulso. "
-            "Resolucion temporal limitada por Fs; "
-            "conviene que los pulsos tengan al menos varias muestras."
-        )
-        pulse_note.setWordWrap(True)
-        pulse_form.addRow(pulse_note)
+        self.pulse_group.setToolTip("El disparo se confirma al finalizar el pulso.")
         dialog_layout.addWidget(self.pulse_group)
         self.pulse_group.hide()
 
@@ -248,7 +250,7 @@ class TriggerControls(QGroupBox):
         timeout_form = QFormLayout(self.timeout_group)
         self.timeout_state = QComboBox()
         for label, value in (("Alto o bajo", "either"),
-                             ("Solo HIGH", "high"), ("Solo LOW", "low")):
+                             ("Alto", "high"), ("Bajo", "low")):
             self.timeout_state.addItem(label, value)
         timeout_form.addRow("Estado:", self.timeout_state)
         self.timeout_duration = QDoubleSpinBox()
@@ -266,10 +268,7 @@ class TriggerControls(QGroupBox):
         self.timeout_hysteresis.setSuffix(" V")
         self.timeout_hysteresis.setKeyboardTracking(False)
         timeout_form.addRow("Histéresis:", self.timeout_hysteresis)
-        timeout_note = QLabel("Dispara una vez cuando una entrada queda estable "
-                              "durante el tiempo configurado. Usa el nivel principal.")
-        timeout_note.setWordWrap(True)
-        timeout_form.addRow(timeout_note)
+        self.timeout_duration.setToolTip("Tiempo sin transiciones respecto del nivel principal.")
         dialog_layout.addWidget(self.timeout_group)
         self.timeout_group.hide()
 
@@ -300,10 +299,7 @@ class TriggerControls(QGroupBox):
         self.runt_min_width.setSuffix(" µs")
         self.runt_min_width.setKeyboardTracking(False)
         runt_form.addRow("Duración mínima:", self.runt_min_width)
-        runt_note = QLabel("El pulso debe superar el primer umbral sin alcanzar "
-                           "el segundo, y luego volver al estado original.")
-        runt_note.setWordWrap(True)
-        runt_form.addRow(runt_note)
+        self.runt_group.setToolTip("Cruza el primer umbral y regresa sin alcanzar el segundo.")
         dialog_layout.addWidget(self.runt_group)
         self.runt_group.hide()
 
@@ -320,8 +316,6 @@ class TriggerControls(QGroupBox):
         self.logic_ch2_state = QComboBox()
         self.logic_ch2_state.addItem("HIGH", "high")
         self.logic_ch2_state.addItem("LOW", "low")
-        logic_form.addRow("CH1:", self.logic_ch1_state)
-        logic_form.addRow("CH2:", self.logic_ch2_state)
         self.logic_ch1_level = QDoubleSpinBox()
         self.logic_ch1_level.setRange(-100000.0, 100000.0)
         self.logic_ch1_level.setDecimals(4)
@@ -332,25 +326,33 @@ class TriggerControls(QGroupBox):
         self.logic_ch2_level.setDecimals(4)
         self.logic_ch2_level.setSuffix(" V")
         self.logic_ch2_level.setKeyboardTracking(False)
+        logic_form.addRow("Estado CH1:", self.logic_ch1_state)
         logic_form.addRow("Nivel CH1:", self.logic_ch1_level)
+        logic_form.addRow("Estado CH2:", self.logic_ch2_state)
         logic_form.addRow("Nivel CH2:", self.logic_ch2_level)
         self.logic_edge = QComboBox()
         self.logic_edge.addItem("Cuando se cumple", "rising")
         self.logic_edge.addItem("Cuando deja de cumplirse", "falling")
         logic_form.addRow("Disparar:", self.logic_edge)
-        logic_note = QLabel("Requiere dos canales activos y sincronizados. "
-                            "Umbrales independientes en voltios calibrados.")
-        logic_note.setWordWrap(True)
-        logic_form.addRow(logic_note)
+        self.logic_group.setToolTip("Requiere dos canales activos y sincronizados.")
         dialog_layout.addWidget(self.logic_group)
         self.logic_group.hide()
 
-        note = QLabel("Tipos: flanco, ancho de pulso, Timeout, Runt y Logic.")
-        note.setWordWrap(True)
-        dialog_layout.addWidget(note)
+        timing_group = QGroupBox("Entre disparos")
+        timing_form = QFormLayout(timing_group)
+        timing_form.addRow("Holdoff:", self.holdoff_spin)
+        dialog_layout.addWidget(timing_group)
+        for form in (self.type_form, pulse_form, timeout_form, runt_form, logic_form, timing_form):
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setVerticalSpacing(10)
+
+        footer = QHBoxLayout()
+        footer.addStretch()
         close_button = QPushButton("Cerrar")
+        close_button.setDefault(True)
         close_button.clicked.connect(self.settings_dialog.hide)
-        dialog_layout.addWidget(close_button)
+        footer.addWidget(close_button)
+        dialog_layout.addLayout(footer)
 
     def connect_signals(self):
         self.settings_button.clicked.connect(self._show_settings)
@@ -492,12 +494,16 @@ class TriggerControls(QGroupBox):
         self.timeout_group.setVisible(kind == "timeout")
         self.runt_group.setVisible(kind == "runt")
         self.logic_group.setVisible(kind == "logic")
+        self.type_form.setRowVisible(self.slope_combo, kind == "edge")
         self.slope_combo.setEnabled(kind == "edge")
         self.level_knob.setEnabled(kind in ("edge", "pulse_width", "timeout"))
         self.level_input.setEnabled(kind in ("edge", "pulse_width", "timeout"))
         self.auto_level_button.setEnabled(kind in ("edge", "pulse_width", "timeout"))
-        self.pulse_upper.setEnabled(
-            self.pulse_comparison.currentData() in ("within", "outside")
+        interval = self.pulse_comparison.currentData() in ("within", "outside")
+        self.pulse_form.setRowVisible(self.pulse_upper, interval)
+        self.pulse_upper.setEnabled(interval)
+        self.pulse_form.labelForField(self.pulse_lower).setText(
+            "Mínimo:" if interval else "Duración:"
         )
 
     def _emit_trigger_type_change(self, _index):
@@ -629,6 +635,7 @@ class TriggerControls(QGroupBox):
             self.source_combo.setCurrentIndex(self.source_combo.findData(channel))
         finally:
             del blocker
+
 
 
 

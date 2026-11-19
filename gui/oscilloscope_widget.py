@@ -24,6 +24,7 @@ from gui.oscilloscope.interface import InterfaceMixin
 from gui.oscilloscope.acquisition import AcquisitionMixin
 from gui.oscilloscope.processing import ProcessingMixin
 from gui.oscilloscope.display import DisplayMixin
+from gui.oscilloscope.measurements import MeasurementsMixin
 from gui.oscilloscope.math_trace import MathTraceMixin
 from gui.oscilloscope.roll import RollMixin
 from gui.oscilloscope.fastact import FastActMixin
@@ -36,6 +37,7 @@ class OscilloscopeWidget(
     AcquisitionMixin,
     ProcessingMixin,
     DisplayMixin,
+    MeasurementsMixin,
     MathTraceMixin,
     RollMixin,
     FastActMixin,
@@ -181,6 +183,7 @@ class OscilloscopeWidget(
         )
 
         self.controls = OscilloscopeControls()
+        self._clear_measurements()
 
         self.plot = OscilloscopePlot(
             horizontal_divisions=self.horizontal_divisions,

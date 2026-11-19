@@ -7,7 +7,7 @@ Los ajustes avanzados se muestran en un diálogo no modal.
 from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QPushButton, QVBoxLayout, QWidget,
+    QLabel, QLayout, QPushButton, QVBoxLayout, QWidget,
 )
 
 
@@ -70,11 +70,20 @@ class AcquisitionControls(QGroupBox):
 
         # Se crea una sola vez: los combos conservan estado y conexiones.
         self.settings_dialog = QDialog(self)
-        self.settings_dialog.setWindowTitle("Configuración de adquisición")
+        self.settings_dialog.setWindowTitle("Adquisición")
         self.settings_dialog.setModal(False)
-        self.settings_dialog.setMinimumWidth(330)
         dialog_layout = QVBoxLayout(self.settings_dialog)
-        form = QFormLayout()
+        dialog_layout.setContentsMargins(16, 16, 16, 16)
+        dialog_layout.setSpacing(12)
+        dialog_layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
+        mode_group = QGroupBox("Modo de adquisición")
+        mode_group.setMinimumWidth(368)
+        mode_layout = QVBoxLayout(mode_group)
+        mode_layout.setSpacing(12)
+        self.mode_form = QFormLayout()
+        self.mode_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.mode_form.setVerticalSpacing(10)
 
         self.mode_combo = QComboBox()
         modes = (
@@ -89,22 +98,23 @@ class AcquisitionControls(QGroupBox):
         for label, value in modes:
             self.mode_combo.addItem(label, value)
         self.mode_combo.setCurrentIndex(0)
-        self.mode_combo.setToolTip("Procesamiento de las muestras adquiridas")
+        self.mode_combo.setAccessibleName("Modo de adquisición")
+        mode_layout.addWidget(self.mode_combo)
+        mode_layout.addLayout(self.mode_form)
+        dialog_layout.addWidget(mode_group)
 
         self.interpolation_combo = QComboBox()
         interpolations = (
             ("Puntos", "none"),
             ("Lineal", "linear"),
-            ("Cúbica", "cubic"),
             ("Sinc (sin x/x)", "sinc"),
         )
         for label, value in interpolations:
             self.interpolation_combo.addItem(label, value)
-        # Los cuatro modos están disponibles: afectan solo al dibujo.
+        # La representación no modifica las muestras adquiridas.
         self.interpolation_combo.setCurrentIndex(1)
         self.interpolation_combo.setToolTip("Representación visual entre muestras")
 
-        form.addRow("Modo:", self.mode_combo)
         self.peak_bucket_combo = QComboBox()
         for count in (2, 4, 8, 16):
             self.peak_bucket_combo.addItem(str(count), count)
@@ -112,7 +122,7 @@ class AcquisitionControls(QGroupBox):
         self.peak_bucket_combo.setToolTip(
             "Mínimo y máximo por intervalo de una captura. No acumula capturas."
         )
-        form.addRow("Muestras por intervalo:", self.peak_bucket_combo)
+        self.mode_form.addRow("Muestras por intervalo:", self.peak_bucket_combo)
         self.high_resolution_factor_combo = QComboBox()
         for factor in (2, 4, 8, 16):
             self.high_resolution_factor_combo.addItem(f"{factor} muestras", factor)
@@ -120,36 +130,38 @@ class AcquisitionControls(QGroupBox):
         self.high_resolution_factor_combo.setToolTip(
             "Cantidad de muestras consecutivas combinadas en una sola captura"
         )
-        form.addRow("Factor Hi-Res:", self.high_resolution_factor_combo)
+        self.mode_form.addRow("Muestras por grupo:", self.high_resolution_factor_combo)
         self.average_count_combo = QComboBox()
         for count in (4, 16, 32, 64, 128, 256):
             self.average_count_combo.addItem(str(count), count)
         self.average_count_combo.setCurrentIndex(1)
         self.average_count_combo.setToolTip("Cantidad de capturas alineadas del promedio móvil")
-        form.addRow("Capturas a promediar:", self.average_count_combo)
+        self.mode_form.addRow("Capturas a promediar:", self.average_count_combo)
         self.envelope_count_combo = QComboBox()
         for count in (4, 16, 32, 64, 128, 256):
             self.envelope_count_combo.addItem(str(count), count)
         self.envelope_count_combo.setCurrentIndex(1)
         self.envelope_count_combo.setToolTip("Últimas N capturas que forman los mínimos y máximos")
-        form.addRow("Capturas de envolvente:", self.envelope_count_combo)
+        self.mode_form.addRow("Capturas a combinar:", self.envelope_count_combo)
         self.average_progress_label = QLabel("0 / 16 capturas")
-        form.addRow("Progreso:", self.average_progress_label)
-        form.addRow("Interpolación:", self.interpolation_combo)
-        dialog_layout.addLayout(form)
-        note = QLabel(
-            "Promediado y Envolvente esperan disparos válidos, también en Auto. "
-            "SINGLE completa N capturas y congela ambos canales.\n"
-            "Hi-Res promedia muestras vecinas de una captura. "
-            "Roll muestra un historial continuo sin disparo. "
-            "Puntos, Lineal, Cúbica y Sinc cambian solo el dibujo, no los datos. "
-            "FastAct suma densidad de capturas con persistencia visual de 2 segundos."
+        self.mode_form.addRow("Acumuladas:", self.average_progress_label)
+        self.average_progress_label.setToolTip(
+            "Espera disparos válidos. SINGLE se detiene al completar las capturas."
         )
-        note.setWordWrap(True)
-        dialog_layout.addWidget(note)
+
+        display_group = QGroupBox("Representación")
+        display_form = QFormLayout(display_group)
+        display_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        display_form.addRow("Interpolación:", self.interpolation_combo)
+        dialog_layout.addWidget(display_group)
+
+        footer = QHBoxLayout()
+        footer.addStretch()
         close_button = QPushButton("Cerrar")
+        close_button.setDefault(True)
         close_button.clicked.connect(self.settings_dialog.hide)
-        dialog_layout.addWidget(close_button)
+        footer.addWidget(close_button)
+        dialog_layout.addLayout(footer)
 
     def connect_signals(self):
         self.run_button.clicked.connect(self.run_clicked.emit)
@@ -181,15 +193,17 @@ class AcquisitionControls(QGroupBox):
 
     def _update_accumulation_controls(self):
         self.settings_button.setText(self.mode_combo.currentText())
-        self.peak_bucket_combo.setEnabled(self.mode_combo.currentData() == "peak_detect")
-        self.high_resolution_factor_combo.setEnabled(
-            self.mode_combo.currentData() == "high_resolution"
+        mode = self.mode_combo.currentData()
+        controls = (
+            (self.peak_bucket_combo, mode == "peak_detect"),
+            (self.high_resolution_factor_combo, mode == "high_resolution"),
+            (self.average_count_combo, mode == "average"),
+            (self.envelope_count_combo, mode == "envelope"),
+            (self.average_progress_label, mode in ("average", "envelope")),
         )
-        enabled = self.mode_combo.currentData() == "average"
-        self.average_count_combo.setEnabled(enabled)
-        envelope = self.mode_combo.currentData() == "envelope"
-        self.envelope_count_combo.setEnabled(envelope)
-        self.average_progress_label.setEnabled(enabled or envelope)
+        for control, visible in controls:
+            self.mode_form.setRowVisible(control, visible)
+            control.setEnabled(visible)
 
     def _emit_high_resolution_factor(self, _index):
         self.high_resolution_factor_changed.emit(
@@ -293,6 +307,7 @@ class AcquisitionControls(QGroupBox):
         if not enabled and self.interpolation_combo.currentIndex() == index:
             raise ValueError("No se puede deshabilitar la interpolación seleccionada.")
         self.interpolation_combo.model().item(index).setEnabled(bool(enabled))
+
 
 
 
