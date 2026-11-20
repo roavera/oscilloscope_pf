@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
 
 
 class FilterControls(QGroupBox):
-    configuration_changed = Signal(bool, str, str, float, float)
+    configuration_changed = Signal(bool, str, str, float, float, str, int)
 
     def __init__(self, parent=None):
         super().__init__("Filtros digitales", parent)
@@ -14,6 +14,18 @@ class FilterControls(QGroupBox):
         self.enabled_checkbox = QCheckBox("Activar filtro")
         layout.addWidget(self.enabled_checkbox)
         form = QFormLayout()
+        self.family_combo = QComboBox()
+        self.family_combo.addItem("IIR · Butterworth", "iir")
+        self.family_combo.addItem("FIR · Hamming", "fir")
+        self.taps_combo = QComboBox()
+        for taps in (33, 65, 129, 257, 513, 1025):
+            self.taps_combo.addItem(str(taps), taps)
+        self.taps_combo.setCurrentIndex(self.taps_combo.findData(129))
+        form.addRow("Familia:", self.family_combo)
+        form.addRow("Coeficientes FIR:", self.taps_combo)
+        self.taps_combo.setEnabled(False)
+        self.family_combo.currentIndexChanged.connect(self._update_family)
+        self.taps_combo.currentIndexChanged.connect(self._emit)
         self.kind_combo = QComboBox()
         for label, value in (("Pasa bajos", "lowpass"), ("Pasa altos", "highpass"), ("Pasa banda", "bandpass"), ("Rechaza banda", "bandstop")):
             self.kind_combo.addItem(label, value)
@@ -55,14 +67,24 @@ class FilterControls(QGroupBox):
     def _update_cutoff_visibility(self, *_):
         self.high_input.setEnabled(self.kind_combo.currentData() in ("bandpass", "bandstop"))
 
+    def _update_family(self, *_):
+        self.taps_combo.setEnabled(self.family_combo.currentData() == "fir")
+        self._emit()
+
     def _emit(self, *_):
         kind = self.kind_combo.currentData()
         band = kind in ("bandpass", "bandstop")
         self.status_label.setText("Filtro activo" if self.enabled_checkbox.isChecked() else "Filtro desactivado")
-        self.configuration_changed.emit(self.enabled_checkbox.isChecked(), str(kind), str(self.channel_combo.currentData()), float(self.low_input.value()), float(self.high_input.value() if band else self.low_input.value()))
+        self.configuration_changed.emit(
+            self.enabled_checkbox.isChecked(), kind, self.channel_combo.currentData(),
+            self.low_input.value(), self.high_input.value() if band else self.low_input.value(),
+            self.family_combo.currentData(), self.taps_combo.currentData(),
+        )
 
     def reset(self):
         self.enabled_checkbox.setChecked(False)
+        self.family_combo.setCurrentIndex(0)
+        self.taps_combo.setCurrentIndex(self.taps_combo.findData(129))
         self.kind_combo.setCurrentIndex(0)
         self.channel_combo.setCurrentIndex(0)
         self.low_input.setValue(1000.0)

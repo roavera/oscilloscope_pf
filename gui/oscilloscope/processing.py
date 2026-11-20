@@ -9,7 +9,7 @@ from acquisition.modes.peak_detect import PeakDetectResult
 from acquisition.modes.high_resolution import effective_high_resolution_factor
 from exporting.capture_export import raw_capture
 from processing.filters import FilterConfig, apply_filter, design_filter
-from processing.stream_filter import ContinuousButterworth
+from processing.stream_filter import ContinuousFilter
 from acquisition.stereo_buffer import StereoBuffer
 
 
@@ -54,17 +54,14 @@ class ProcessingMixin:
         self.trigger_found = False
         self.update_controls_state()
 
-    def set_filter_configuration(self, enabled, kind, channel, cutoff_low, cutoff_high):
+    def set_filter_configuration(self, enabled, kind, channel, cutoff_low, cutoff_high,
+                                 family="iir", numtaps=129):
         """Actualiza el filtro; se aplica a partir de la próxima captura."""
         candidate = FilterConfig(
             enabled=bool(enabled), kind=str(kind), channel=str(channel),
             cutoff_low=float(cutoff_low), cutoff_high=float(cutoff_high),
+            family=family, numtaps=numtaps,
         )
-        if candidate.kind in ("bandpass", "bandstop") and candidate.cutoff_high <= candidate.cutoff_low:
-            self.controls.filter_controls.status_label.setText(
-                "Error: el corte superior debe ser mayor que el inferior"
-            )
-            return
         if candidate.enabled:
             try:
                 design_filter(self.sample_rate, candidate)
@@ -74,8 +71,12 @@ class ProcessingMixin:
         self.filter_config = candidate
         self._reset_continuous_filter()
         if candidate.enabled:
+            detail = "IIR Butterworth"
+            if family == "fir":
+                delay = (numtaps - 1) // 2
+                detail = f"FIR · retardo {delay} muestras"
             self.controls.filter_controls.status_label.setText(
-                f"Activo: {candidate.kind} · {candidate.channel} · desde la próxima captura"
+                f"Activo: {detail} · {candidate.channel.upper()}"
             )
         else:
             self.controls.filter_controls.status_label.setText("Filtro desactivado")
@@ -176,7 +177,7 @@ class ProcessingMixin:
 
     def _reset_continuous_filter(self):
         """Descarta estados y buffer procesado; RAW y su contador se conservan."""
-        self._continuous_iir = ContinuousButterworth()
+        self._continuous_filter = ContinuousFilter()
         self._filtered_buffer = None
         self._filtered_signature = None
         # El histórico filtrado anterior ya no representa al flujo nuevo.
@@ -186,7 +187,7 @@ class ProcessingMixin:
         """Obtiene un tramo filtrado alineado a los indices absolutos RAW.
 
         Filtra solo el sufijo nuevo; la porcion solapada se lee del buffer
-        filtrado. Un salto/discontinuidad reinicia el estado SOS.
+        filtrado. Un salto/discontinuidad reinicia el estado del filtro.
         """
         signature = (float(self.sample_rate), self.acquisition.source, self.filter_config)
         if (getattr(self, '_filtered_signature', None) != signature or
@@ -206,7 +207,7 @@ class ProcessingMixin:
         start = cache.total_samples
         if total > start:
             new_data = calibrated[start - first_sample:]
-            filtered = self._continuous_iir.process(new_data, self.sample_rate, self.filter_config)
+            filtered = self._continuous_filter.process(new_data, self.sample_rate, self.filter_config)
             cache.add_samples(filtered)
         view = cache.get_data(len(calibrated))
         if len(view) != len(calibrated):
