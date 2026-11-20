@@ -19,11 +19,7 @@ class AmplitudeMeasurements:
 
 
 def measure_amplitude(samples, sample_rate=None):
-    """Mide todas las muestras; RMS incluye DC. No interpola ni elimina NaN.
-
-    Devuelve None para captura vacía/no finita. La unidad es la de entrada.
-    Una muestra es válida para amplitud (Vpp=0); no implica periodicidad.
-    """
+    
     values = np.asarray(samples, dtype=np.float64)
     if values.ndim != 1:
         raise ValueError("Las mediciones requieren una señal de un solo canal")

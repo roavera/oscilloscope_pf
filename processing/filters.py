@@ -23,7 +23,7 @@ class FilterConfig:
 FILTER_KINDS = ("lowpass", "highpass", "bandpass", "bandstop")
 CHANNELS = ("both", "ch1", "ch2")
 
-
+# Parámetros de diseño del filtro, validación de parametros y diseño de coeficientes SOS. 
 def _parameters(rate, config):
     """Valida parámetros físicos sin recortar silenciosamente frecuencias."""
     rate = float(rate)
