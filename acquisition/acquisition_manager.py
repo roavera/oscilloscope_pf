@@ -425,6 +425,7 @@ class AcquisitionManager:
             backend = AudioInput(
                 sample_rate=self.sample_rate, channels=self.channels,
                 blocksize=self.blocksize, device=self.device,
+                on_error=self._report_error,
             )
             # AudioInput actual siempre entrega CH1 como vector mono.
             receive = lambda x: self._ingest(x, callback, channel="L")

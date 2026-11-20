@@ -124,7 +124,8 @@ class AcquisitionSourceDialog(QDialog):
     AUTOMATIC_PORT = "Detectar automáticamente"
 
     def __init__(self, current_source=AcquisitionManager.AUDIO,
-                 current_channels=1, current_usb_port=None, parent=None):
+                 current_channels=1, current_usb_port=None,
+                 current_audio_device=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Fuente de adquisición")
         self.setObjectName("AcquisitionSourceDialog")
@@ -160,7 +161,7 @@ class AcquisitionSourceDialog(QDialog):
         layout.addLayout(form)
 
         self.pages = QStackedWidget()
-        self.pages.addWidget(self._audio_page())
+        self.pages.addWidget(self._audio_page(current_audio_device))
         self.pages.addWidget(self._simulator_page())
         self.pages.addWidget(self._blackpill_page(current_usb_port))
         layout.addWidget(self.pages)
@@ -239,17 +240,65 @@ class AcquisitionSourceDialog(QDialog):
         label.setWordWrap(True)
         return label
 
-    def _audio_page(self):
+    def _audio_page(self, current_device=None):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel("Entrada de audio del equipo"))
-        layout.addWidget(self._note(
-            "Se utiliza automáticamente el dispositivo predeterminado de entrada "
-            "del sistema mediante sounddevice. Para dos canales, el dispositivo "
-            "debe permitir captura estéreo."
-        ))
+        row = QHBoxLayout()
+        self.audio_device = QComboBox()
+        row.addWidget(self.audio_device, 1)
+        refresh = QPushButton("Actualizar dispositivos")
+        refresh.clicked.connect(self.refresh_audio_devices)
+        row.addWidget(refresh)
+        layout.addLayout(row)
+        self.audio_note = self._note("")
+        layout.addWidget(self.audio_note)
+        self.refresh_audio_devices(current_device)
         layout.addStretch()
         return page
+
+    @Slot()
+    def refresh_audio_devices(self, selected=None):
+        if not hasattr(self, "audio_device"):
+            return
+        if selected is None and self.audio_device.count():
+            selected = self.audio_device.currentData()
+        self.audio_device.clear()
+        try:
+            import sounddevice as sd
+            host_apis = sd.query_hostapis()
+            devices = sd.query_devices()
+        except Exception as exc:
+            self.audio_note.setText(f"No se pudieron consultar dispositivos: {exc}")
+            return
+        self.audio_device.addItem("Entrada predeterminada del sistema", ("input", None))
+        for index, info in enumerate(devices):
+            if int(info.get("max_input_channels", 0)) <= 0:
+                continue
+            host = host_apis[int(info["hostapi"])]["name"]
+            self.audio_device.addItem(
+                f"{info['name']} — {host}", ("input", int(index))
+            )
+        loopbacks = 0
+        try:
+            import soundcard as sc
+            for microphone in sc.all_microphones(include_loopback=True):
+                if getattr(microphone, "isloopback", False):
+                    self.audio_device.addItem(
+                        f"Loopback — {microphone.name}",
+                        ("loopback", microphone.id),
+                    )
+                    loopbacks += 1
+        except Exception:
+            pass
+        if selected is not None:
+            index = self.audio_device.findData(selected)
+            if index >= 0:
+                self.audio_device.setCurrentIndex(index)
+        note = "Elegí una entrada disponible o una fuente loopback."
+        if loopbacks == 0:
+            note += " No se detectó loopback; instalá/activá una fuente de loopback en el sistema."
+        self.audio_note.setText(note)
 
     def _simulator_page(self):
         page = QWidget()
@@ -369,6 +418,7 @@ class AcquisitionSourceDialog(QDialog):
             "source": self.source.currentData(),
             "channels": self.channel_count.currentData(),
             "usb_port": self._selected_port(),
+            "audio_device": self.audio_device.currentData(),
             "simulator": [self.sim_ch1.settings(), self.sim_ch2.settings()],
             "physical_generator": (
                 [self.physical_ch1.settings(), self.physical_ch2.settings()]

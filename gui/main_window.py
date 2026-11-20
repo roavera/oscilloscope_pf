@@ -202,6 +202,7 @@ class MainWindow(QMainWindow):
             current_source=manager.source,
             current_channels=manager.channels,
             current_usb_port=manager.usb_port,
+            current_audio_device=manager.device,
             parent=self,
         )
         # Al reabrir desde el menú, mostrar la configuración ACTUAL de cada
@@ -243,7 +244,7 @@ class MainWindow(QMainWindow):
         scope.disconnect_acquisition()
         scope.channels = count
         scope.acquisition.channels = count
-        scope.acquisition.device = None  # sounddevice elige la entrada predeterminada
+        scope.acquisition.device = config["audio_device"]
         scope.acquisition.usb_simulated = False
         self._pending_physical_generator = (
             config["physical_generator"]
