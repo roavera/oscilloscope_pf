@@ -19,7 +19,7 @@ import numpy as np
 SYNC = b"\xAA\x55"
 _HEADER = struct.Struct("<2sBBH")
 HEADER_SIZE = _HEADER.size
-FIRMWARE_FS = 97656.25  # Valor nominal: no viene incluido en las tramas.
+FIRMWARE_FS = 95982.142857  # Valor nominal: no viene incluido en las tramas.
 
 # Se conservan por compatibilidad: estas dos constantes describen ESTÉREO.
 CHANNELS = 2
