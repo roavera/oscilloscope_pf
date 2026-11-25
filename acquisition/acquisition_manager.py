@@ -29,7 +29,7 @@ Ejemplo:
         on_state_changed=print, on_error=print,
     )
     manager.start(procesar_muestras)
-    # Al cerrar, desde el hilo de control: manager.stop()
+    # Al cerrar, desde el hilo de control: manager.stop()s
 
 """
 from __future__ import annotations
@@ -40,6 +40,7 @@ import logging
 import numpy as np
 
 from acquisition.acquisition_buffer import AcquisitionBuffer
+from communication.protocol import FIRMWARE_FS
 from queue import Queue, Empty, Full
 
 
@@ -167,8 +168,8 @@ class _USBBackend:
                 raise ValueError(f"{key} debe ser no negativo")
             if key == "duty" and not 0.01 <= value <= 0.99:
                 raise ValueError("duty debe estar entre 0.01 y 0.99")
-            if key in ("frequency", "frequency_2") and not 0 <= value < 97656.25 / 2:
-                raise ValueError("Frecuencia fuera de la banda de Nyquist")
+            if key in ("frequency", "frequency_2") and not 0 <= value < FIRMWARE_FS / 2:
+                raise ValueError(f"Frecuencia fuera de la banda de Nyquist ({FIRMWARE_FS / 2} Hz)")
             settings[key] = value
         # put_nowait evita bloquear Qt si el lector deja de responder.
         try:
@@ -257,8 +258,8 @@ class AcquisitionManager:
 
     SAMPLE_RATES = {
         AUDIO: 48000.0,
-        SIMULATOR: 97656.25,
-        BLACKPILL_USB: 97656.25,
+        SIMULATOR: FIRMWARE_FS,
+        BLACKPILL_USB: FIRMWARE_FS,
     }
 
     def __init__(self, source=AUDIO, sample_rate=None, channels=1,
@@ -271,8 +272,8 @@ class AcquisitionManager:
             self.SAMPLE_RATES[self.source] if sample_rate is None else sample_rate
         )
         self._validate_rate(self.sample_rate)
-        if self.source != self.AUDIO and self.sample_rate != 97656.25:
-            raise ValueError('Blackpill requiere Fs nominal 97656.25 Hz')
+        if self.source != self.AUDIO and self.sample_rate != FIRMWARE_FS:
+            raise ValueError(f'Blackpill requiere Fs nominal {FIRMWARE_FS} Hz')
         if channels not in (1, 2):
             raise ValueError("channels debe ser 1 o 2")
         if int(blocksize) <= 0:
@@ -375,8 +376,8 @@ class AcquisitionManager:
             self.SAMPLE_RATES[source] if sample_rate is None else sample_rate
         )
         self._validate_rate(new_rate)
-        if source != self.AUDIO and new_rate != 97656.25:
-            raise ValueError('Blackpill requiere Fs nominal 97656.25 Hz')
+        if source != self.AUDIO and new_rate != FIRMWARE_FS:
+            raise ValueError(f'Blackpill requiere Fs nominal {FIRMWARE_FS} Hz')
         self.stop()
         self.source = source
         self.sample_rate = new_rate

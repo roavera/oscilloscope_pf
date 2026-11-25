@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from functools import lru_cache
 import numpy as np
-from scipy.signal import butter, firwin, lfilter, sosfilt, sosfilt_zi
+from scipy.signal import butter, firwin, sosfilt, sosfilt_zi
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,20 @@ def design_filter(sample_rate, config, *, max_iir_order=16):
 
 def filter_block(coefficients, family, samples, state):
     if family == "fir":
-        return lfilter(coefficients, [1.0], samples, zi=state)
+        # FIR simétrico de longitud 2M+1. El estado contiene las 2M
+        # entradas anteriores en orden cronológico, por separado para cada canal.
+        middle = len(coefficients) // 2
+        data = np.concatenate((state, samples))
+        if len(samples) == 0:
+            return np.empty(0, dtype=data.dtype), state.copy()
+        windows = np.lib.stride_tricks.sliding_window_view(data, len(coefficients))
+        output = coefficients[middle] * windows[:, middle]
+        # Limitar la memoria temporal al sumar los pares de muestras.
+        for start in range(0, len(output), 256):
+            block = windows[start:start + 256]
+            pairs = block[:, :middle] + block[:, :middle:-1]
+            output[start:start + len(block)] += np.einsum("ij,j->i", pairs, coefficients[:middle])
+        return output, data[-(2 * middle):].copy()
     return sosfilt(coefficients, samples, zi=state)
 
 
@@ -93,7 +106,7 @@ def apply_filter(samples, sample_rate, config):
     selected = (0, 1) if config.channel == "both" else (0,) if config.channel == "ch1" else (1,)
     # Inicialización estacionaria para reducir el transitorio inicial en
     # capturas recortadas. No reemplaza un estado entre bloques continuos.
-    zi = (np.cumsum(coefficients[:0:-1])[::-1] if config.family == "fir"
+    zi = (np.ones(len(coefficients) - 1) if config.family == "fir"
           else sosfilt_zi(coefficients))
     for index in selected:
         initial_state = zi * result[0, index]
