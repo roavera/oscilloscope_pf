@@ -4,12 +4,12 @@
     "ch1": {
       "gain_v_per_unit": 1.537468,
       "offset_volts": 0.0,
-      "verified": false
+      "verified": true
     },
     "ch2": {
       "gain_v_per_unit": 1.537468,
       "offset_volts": 0.0,
-      "verified": false
+      "verified": true
     }
   }
 }
