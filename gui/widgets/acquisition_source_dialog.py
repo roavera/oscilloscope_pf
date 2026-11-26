@@ -8,7 +8,7 @@ from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFrame,
+    QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFrame, QLineEdit,
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
@@ -186,9 +186,54 @@ class AcquisitionSourceDialog(QDialog):
         layout.addLayout(row)
         self.audio_note = self._note("")
         layout.addWidget(self.audio_note)
+        self.audio_rate = QComboBox()
+        self.audio_rate.addItem('Automática', None)
+        for rate in (8000, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000):
+            self.audio_rate.addItem(f'{rate} Hz', rate)
+        layout.addWidget(QLabel('Frecuencia de muestreo (validada al iniciar)'))
+        layout.addWidget(self.audio_rate)
+        self.audio_gain_setting = QLineEdit()
+        self.audio_gain_setting.hide()
+        self._pending_audio_profile = None
+        self.audio_cal_note = self._note('Calibración: disponible después de iniciar la adquisición.')
+        layout.addWidget(self.audio_cal_note)
+        self.audio_profile_button = QPushButton('Recuperar perfil de calibración')
+        self.audio_profile_button.clicked.connect(self._choose_audio_profile)
+        layout.addWidget(self.audio_profile_button)
+        self.audio_device.currentIndexChanged.connect(self._audio_calibration_visibility)
+        self.audio_device.currentIndexChanged.connect(self._audio_rate_refresh)
         self.refresh_audio_devices(current_device)
+        self._audio_rate_refresh()
+        self._audio_calibration_visibility()
         layout.addStretch()
         return page
+
+    def _audio_rate_refresh(self, *_):
+        if not hasattr(self, 'audio_rate'):
+            return
+        try:
+            from acquisition.audio_configuration import default_rate
+            rate = default_rate(self.audio_device.currentData())
+            self.audio_rate.setItemText(0, f'Automática ({rate:g} Hz)')
+        except Exception:
+            self.audio_rate.setItemText(0, 'Automática (no detectada)')
+
+    def _audio_calibration_visibility(self, *_):
+        device = self.audio_device.currentData()
+        physical = bool(device and device[0] == 'input')
+        self.audio_profile_button.setVisible(physical)
+        self.audio_cal_note.setVisible(physical)
+        self.audio_gain_setting.clear()
+        self.audio_cal_note.setText('Calibración: iniciá la adquisición y abrí Configuración → Calibración con generador.')
+
+    def _choose_audio_profile(self):
+        from PySide6.QtWidgets import QInputDialog
+        setting, ok = QInputDialog.getText(self, 'Recuperar calibración',
+            'Identificación de la ganancia usada al calibrar. Dejá vacío para usar unidades digitales.',
+            text=self.audio_gain_setting.text())
+        if ok:
+            self.audio_gain_setting.setText(setting.strip())
+            self.audio_cal_note.setText('Se buscará el perfil correspondiente al iniciar.' if setting.strip() else 'Sin perfil seleccionado: unidades digitales.')
 
     @Slot()
     def refresh_audio_devices(self, selected=None):
@@ -354,6 +399,9 @@ class AcquisitionSourceDialog(QDialog):
             "channels": self.channel_count.currentData(),
             "usb_port": self._selected_port(),
             "audio_device": self.audio_device.currentData(),
+            "audio_rate": self.audio_rate.currentData(),
+            "audio_gain_setting": self.audio_gain_setting.text().strip(),
+            "pending_audio_profile": self._pending_audio_profile,
             "simulator": [self.sim_ch1.get_settings(), self.sim_ch2.get_settings()],
             "physical_generator": (
                 [self.physical_ch1.settings(), self.physical_ch2.settings()]

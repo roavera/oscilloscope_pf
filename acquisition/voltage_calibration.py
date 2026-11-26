@@ -53,6 +53,9 @@ class VoltageCalibration:
         self.path = Path(path) if path is not None else CALIBRATION_PATH
         self._physical = {1: ChannelCalibration(), 2: ChannelCalibration()}
         self._verified = {1: False, 2: False}
+        self.audio_profiles = {}
+        self._audio_key = None
+        self._audio_channels = 1
         self.load()
 
     def load(self):
@@ -71,6 +74,19 @@ class VoltageCalibration:
             )
             verified[channel] = bool(item.get("verified", False))
         self._physical, self._verified = configured, verified
+        self.audio_profiles = payload.get('audio_profiles', {})
+        if not isinstance(self.audio_profiles, dict):
+            raise ValueError('Perfiles de audio inválidos')
+
+    def select_audio_profile(self, key, channels):
+        self._audio_key = key
+        self._audio_channels = int(channels)
+
+    def _audio_verified(self):
+        profile = self.audio_profiles.get(self._audio_key, {})
+        return all(bool(profile.get(f'ch{ch}', {}).get('verified', False))
+                   for ch in range(1, self._audio_channels + 1))
+
 
     def profile(self, source: str, channel: int) -> ChannelCalibration:
         if channel not in (1, 2):
@@ -80,6 +96,9 @@ class VoltageCalibration:
         if source == SOURCE_BLACKPILL:
             return self._physical[channel]
         if source == SOURCE_AUDIO:
+            if self._audio_verified() and channel <= self._audio_channels:
+                item = self.audio_profiles[self._audio_key][f'ch{channel}']
+                return ChannelCalibration(item['gain_v_per_unit'], item['offset_volts'])
             return ChannelCalibration()
         raise ValueError(f"Fuente de adquisición desconocida: {source}")
 
@@ -109,11 +128,11 @@ class VoltageCalibration:
                 return "Blackpill " + label
             return "Blackpill sin calibrar"
         if source == SOURCE_AUDIO:
-            return "Audio: unidades digitales"
+            return "Audio calibrado" if self._audio_verified() else "Audio: unidades digitales"
         raise ValueError("Fuente desconocida")
 
     def has_volts(self, source: str) -> bool:
-        return source == SOURCE_SIMULATOR or (source == SOURCE_BLACKPILL and
+        return (source == SOURCE_AUDIO and self._audio_verified()) or source == SOURCE_SIMULATOR or (source == SOURCE_BLACKPILL and
                 all(self._verified.values()))
 
     def set_physical(self, channel: int, gain_v_per_unit: float, offset_volts: float,
@@ -127,7 +146,7 @@ class VoltageCalibration:
             self.save()
 
     def as_dict(self):
-        return {"version": 1, "blackpill_usb": {
+        return {"version": 1, "audio_profiles": self.audio_profiles, "blackpill_usb": {
             f"ch{ch}": {"gain_v_per_unit": self._physical[ch].gain_v_per_unit,
                         "offset_volts": self._physical[ch].offset_volts,
                         "verified": self._verified[ch]}

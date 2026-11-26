@@ -206,6 +206,13 @@ class MainWindow(QMainWindow):
             current_audio_device=manager.device,
             parent=self,
         )
+        # El usuario confirma explícitamente las condiciones antes de recuperar un perfil.
+        dialog.audio_gain_setting.clear()
+        previous_rate = getattr(manager, 'audio_requested_rate', None)
+        if previous_rate is not None:
+            index = dialog.audio_rate.findData(previous_rate)
+            if index >= 0:
+                dialog.audio_rate.setCurrentIndex(index)
         # Al reabrir desde el menú, mostrar la configuración ACTUAL de cada
         # canal. Cancelar deja intacta la adquisición en curso.
         for form, live_panel in (
@@ -230,11 +237,29 @@ class MainWindow(QMainWindow):
         if source not in AcquisitionManager.SAMPLE_RATES or count not in (1, 2):
             raise ValueError("Configuración inicial inválida")
 
+        audio_rate = None
+        audio_key = None
+        if source == AcquisitionManager.AUDIO:
+            from acquisition.audio_configuration import resolve_rate, profile_key
+            device = config['audio_device']
+            audio_rate = resolve_rate(device, count, config['audio_rate'])
+            if config['audio_gain_setting'] and device[0] != 'loopback':
+                audio_key = profile_key(device, audio_rate, count, config['audio_gain_setting'])
+            pending = config['pending_audio_profile']
+            if pending is not None and pending[0] != audio_key:
+                raise ValueError('Cambió la configuración después de calibrar; repetí la calibración')
         # No puede haber dos streams usando el mismo dispositivo o puerto.
         scope.disconnect_acquisition()
         scope.channels = count
         scope.acquisition.channels = count
         scope.acquisition.device = config["audio_device"]
+        scope.acquisition.audio_profile_key = audio_key
+        scope.acquisition.audio_gain_setting = config['audio_gain_setting']
+        scope.acquisition.audio_requested_rate = config['audio_rate']
+        if source == AcquisitionManager.AUDIO and config['pending_audio_profile'] is not None:
+            key, profile = config['pending_audio_profile']
+            scope.voltage_calibration.audio_profiles[key] = profile
+            scope.voltage_calibration.save()
         scope.acquisition.usb_simulated = False
         self._pending_physical_generator = (
             config["physical_generator"]
@@ -261,7 +286,7 @@ class MainWindow(QMainWindow):
         scope.set_ch2_position(0.0 if count == 1 else -2.0)
 
         # Incluye arranque y actualización de controles/display.
-        scope.change_acquisition_source(source)
+        scope.change_acquisition_source(source, audio_rate)
 
     @Slot()
     def _show_welcome(self):
@@ -331,8 +356,22 @@ class MainWindow(QMainWindow):
         toggle_action.triggered.connect(self._toggle_cursors)
         menu.addAction(toggle_action)
 
+    def _update_audio_calibration_action(self):
+        manager = self.oscilloscope.acquisition
+        device = manager.device
+        self.audio_calibration_action.setVisible(manager.source == manager.AUDIO and not (isinstance(device, (tuple, list)) and device[0] == 'loopback'))
+        self.audio_calibration_action.setEnabled(manager.is_running)
+
+    def _calibrate_audio_generator(self):
+        from gui.widgets.audio_generator_calibration import calibrate
+        calibrate(self)
+
     def _create_appearance_menu(self):
         self.configuration_menu = self.menuBar().addMenu("Configuración")
+        self.audio_calibration_action = QAction("Calibración con generador", self)
+        self.audio_calibration_action.triggered.connect(self._calibrate_audio_generator)
+        self.configuration_menu.addAction(self.audio_calibration_action)
+        self.configuration_menu.aboutToShow.connect(self._update_audio_calibration_action)
         menu = self.configuration_menu.addMenu("Apariencia")
 
         self.theme_group = QActionGroup(self)

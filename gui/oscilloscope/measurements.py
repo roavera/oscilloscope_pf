@@ -42,7 +42,7 @@ class MeasurementsMixin:
             if all(active) else None
         )
         self._measurement_units = [
-            "V" if source == "simulator" or (
+            "V" if source == "simulator" or (source == "audio" and self.voltage_calibration.has_volts(source)) or (
                 source == "blackpill_usb" and physical[f"ch{ch + 1}"]["verified"]
             ) else "u.a." for ch in (0, 1)
         ]
@@ -100,7 +100,7 @@ class MeasurementsMixin:
                 elif mode == "peak_detect":
                     note += " · muestras originales de Peak Detect"
                 if source == "audio":
-                    note += " · unidades digitales"
+                    note += " · audio calibrado" if units[ch] == "V" else " · unidades digitales"
                 elif source == "blackpill_usb" and units[ch] != "V":
                     note += " · escala sin calibración verificada"
                 elif source == "simulator":

@@ -152,8 +152,19 @@ class AcquisitionMixin:
             return
         if source not in self.acquisition.SAMPLE_RATES:
             raise ValueError(f"Fuente desconocida: {source}")
-        rate = float(sample_rate if sample_rate is not None
-                     else self.acquisition.SAMPLE_RATES[source])
+        if source == AcquisitionManager.AUDIO:
+            from acquisition.audio_configuration import resolve_rate
+            requested = sample_rate if sample_rate is not None else getattr(self.acquisition, 'audio_requested_rate', None)
+            rate = resolve_rate(self.acquisition.device, self.acquisition.channels, requested)
+            setting = getattr(self.acquisition, 'audio_gain_setting', '')
+            device = self.acquisition.device
+            self.acquisition.audio_profile_key = None
+            if setting and isinstance(device, (tuple, list)) and device[0] == 'input':
+                from acquisition.audio_configuration import profile_key
+                self.acquisition.audio_profile_key = profile_key(device, rate, self.acquisition.channels, setting)
+        else:
+            rate = float(sample_rate if sample_rate is not None
+                         else self.acquisition.SAMPLE_RATES[source])
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("Frecuencia de muestreo inválida")
         self.disconnect_acquisition()
@@ -230,6 +241,10 @@ class AcquisitionMixin:
             self._new_data = False
         self._reset_processing()
         self._reset_continuous_filter()
+        self.voltage_calibration.select_audio_profile(
+            getattr(self.acquisition, 'audio_profile_key', None) if self.acquisition.source == AcquisitionManager.AUDIO else None,
+            self.acquisition.channels,
+        )
         self.plot.set_calibration_label(
             self.voltage_calibration.status(self.acquisition.source),
             in_volts=self.voltage_calibration.has_volts(self.acquisition.source),
