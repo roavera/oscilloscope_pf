@@ -575,8 +575,8 @@ class OscilloscopePlot(QWidget):
 
     def set_math_signal(self, values, sample_rate, trigger_sample=None):
         values = np.asarray(values, dtype=np.float64)
-        if values.ndim != 1 or not np.isfinite(values).all():
-            raise ValueError("MATH requiere un vector finito")
+        if values.ndim != 1 or np.isinf(values).any():
+            raise ValueError("Vector MATH inválido")
         self._math_x = self._signal_time_axis(len(values), sample_rate, trigger_sample)
         self._math_values = values.copy()
         self._math_bounds = None
@@ -585,7 +585,7 @@ class OscilloscopePlot(QWidget):
     def set_math_envelope(self, minimum, maximum, sample_rate, trigger_sample=None, *, sample_positions=None):
         minimum, maximum = np.asarray(minimum, dtype=np.float32), np.asarray(maximum, dtype=np.float32)
         if (minimum.ndim != 1 or maximum.shape != minimum.shape
-                or not np.isfinite(minimum).all() or not np.isfinite(maximum).all()
+                or np.isinf(minimum).any() or np.isinf(maximum).any()
                 or np.any(minimum > maximum)):
             raise ValueError("Límites de MATH inválidos")
         self._math_x = self._bounds_time_axis(len(minimum), sample_rate, trigger_sample, sample_positions)
@@ -608,7 +608,7 @@ class OscilloscopePlot(QWidget):
         if signal:
             y = convert(self._math_values)
             if self.math_digital:
-                color = "#ffb347" if self.display_theme == "dark" else "#c46b00"
+                color = "#55e68b" if self.display_theme == "dark" else "#168a4b"
                 self.math_curve.setData(
                     self._math_x, y, pen=pg.mkPen(color, width=2.0),
                     stepMode="left",
@@ -619,11 +619,13 @@ class OscilloscopePlot(QWidget):
                     channel=1, math_trace=True,
                 )
         if envelope:
-            self.math_lower.setData(self._math_x, convert(self._math_bounds[0]))
-            self.math_upper.setData(self._math_x, convert(self._math_bounds[1]))
+            self.math_lower.setData(self._math_x, convert(self._math_bounds[0]), connect="finite")
+            self.math_upper.setData(self._math_x, convert(self._math_bounds[1]), connect="finite")
         self.math_curve.setVisible(self.math_visible and signal)
-        for item in (self.math_lower, self.math_upper, self.math_fill):
+        for item in (self.math_lower, self.math_upper):
             item.setVisible(self.math_visible and envelope)
+        self.math_fill.setVisible(self.math_visible and envelope
+                                  and np.isfinite(self._math_bounds[0]).all())
         suffix = " · DIGITAL: 0=Bajo / 1=Alto" if self.math_digital else f" · {self.math_scale:g} {self.math_unit}/div"
         self.math_legend.setText(f"MATH = {self.math_expression}{suffix}")
         self.math_legend.setPos(self.horizontal_position, self.vertical_divisions/2 - 0.35)
@@ -758,9 +760,24 @@ class OscilloscopePlot(QWidget):
                 symbolPen=None, symbolBrush=pg.mkBrush(color),
             )
         else:
-            px, py = interpolate_display(x, y, self.interpolation_mode)
+            if math_trace and np.isnan(y).any() and self.interpolation_mode == "sinc":
+                # Interpolar cada tramo definido por separado conserva los huecos.
+                valid = np.isfinite(y)
+                edges = np.flatnonzero(np.diff(valid, prepend=False, append=False))
+                xs, ys = [], []
+                for start, stop in edges.reshape(-1, 2):
+                    tx, ty = interpolate_display(x[start:stop], y[start:stop], "sinc",
+                                                 max_points=max(2, 4096 * (stop-start) // len(y)))
+                    xs.extend((tx, [tx[-1]]))
+                    ys.extend((ty, [np.nan]))
+                px = np.concatenate(xs) if xs else []
+                py = np.concatenate(ys) if ys else []
+            elif math_trace and np.isnan(y).any():
+                px, py = x, y
+            else:
+                px, py = interpolate_display(x, y, self.interpolation_mode)
             curve.setData(
-                px, py, pen=pg.mkPen(color, width=width), symbol=None,
+                px, py, pen=pg.mkPen(color, width=width), symbol=None, connect="finite", stepMode=None,
             )
 
     def _refresh_channel_curves(self):
@@ -1049,7 +1066,7 @@ class OscilloscopePlot(QWidget):
         values = np.asarray(values, dtype=np.float32)
         offsets = np.asarray(relative_seconds, dtype=np.float64)
         if (values.ndim != 1 or offsets.shape != values.shape or
-            not np.isfinite(values).all() or not np.isfinite(offsets).all()):
+            np.isinf(values).any() or not np.isfinite(offsets).all()):
             raise ValueError("MATH Roll inválida")
         span = self.time_per_division * self.horizontal_divisions
         self._math_x = self.horizontal_position + span + offsets
@@ -1311,6 +1328,10 @@ class OscilloscopePlot(QWidget):
                     for i, t in enumerate(values):
                         if x[0] <= t <= x[-1]:
                             v = float(np.interp(t, x, y))
+                            if not np.isfinite(v):
+                                self.cursor_points[i].setData([], [])
+                                texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\nIndefinido'
+                                continue
                             y_display = (v / self.math_scale + self.math_position
                                          if channel == 3 else float(self._to_display(v, channel)))
                             self.cursor_points[i].setData([t], [y_display])
@@ -1326,7 +1347,7 @@ class OscilloscopePlot(QWidget):
                                   f'C2: t={b:.6g} s, {unit}={vb:+.6g}\n'
                                   f'Δt={b-a:+.6g} s   Δ={vb-va:+.6g} {unit}')
                     else:
-                        result = 'Track: cursor fuera del tramo adquirido'
+                        result = 'Track: cursor sin muestra válida'
             for i, label in enumerate(self.cursor_labels):
                 label.setVisible(mode != 'Off' and self.cursor_labels_visible)
                 label.setText(texts[i])

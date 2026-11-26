@@ -76,6 +76,12 @@ class HorizontalMixin:
         if (self.running or self.acquisition_processor.get_mode() != "sampling"
                 or self.last_acquisition is None or self._last_display_buffer is None):
             return
+        if self.plot.math_visible and self.last_math is not None:
+            # Los canales y MATH ya tienen la misma referencia temporal en el
+            # gráfico. Conservar esta captura procesada (incluidos los filtros).
+            # Sin ancla de historial RAW, el zoom y el delay sólo mueven la vista.
+            self._frozen_horizontal_data = self.last_acquisition
+            return
         with self._buffer_lock:
             raw = self.buffer.get_data()
             total = int(self.buffer.total_samples)

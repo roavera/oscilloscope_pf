@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from acquisition.acquisition_processor import AcquisitionProcessor
+from acquisition.modes.envelope import EnvelopeResult
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class MathProcessor:
                 elif op == "multiply":
                     values = a * b
                 elif op == "divide":
-                    values = np.divide(a, b, out=np.zeros_like(a), where=np.abs(b) > np.finfo(float).eps)
+                    values = np.divide(a, b, out=np.full_like(a, np.nan), where=b != 0)
                 elif op == "integrate":
                     increments = (a[:-1] + a[1:]) * 0.5 / rate
                     values = np.concatenate(([0.0], np.cumsum(increments)))
@@ -88,11 +89,11 @@ class MathProcessor:
                 elif op == "abs":
                     values = np.abs(a)
                 elif op == "sqrt":
-                    values = np.sqrt(np.maximum(a, 0.0))
+                    values = np.sqrt(a, out=np.full_like(a, np.nan), where=a >= 0)
                 elif op == "log10":
-                    values = np.log10(np.maximum(a, np.finfo(float).tiny))
+                    values = np.log10(a, out=np.full_like(a, np.nan), where=a > 0)
                 elif op == "ln":
-                    values = np.log(np.maximum(a, np.finfo(float).tiny))
+                    values = np.log(a, out=np.full_like(a, np.nan), where=a > 0)
                 elif op == "exp":
                     values = np.exp(np.clip(a, -700.0, 700.0))
                 elif op == "greater":
@@ -111,7 +112,6 @@ class MathProcessor:
                     values = ((a != 0) | (b != 0)).astype(float)
                 elif op == "xor":
                     values = ((a != 0) ^ (b != 0)).astype(float)
-                values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
             except FloatingPointError as exc:
                 raise ValueError("El resultado MATH excede el rango numérico") from exc
         return MathResult(np.arange(len(data), dtype=float)/rate, values.copy())
@@ -153,8 +153,22 @@ class MathTraceProcessor:
             self.reset()
         self.sample_rate = float(sample_rate)
         self.history.append(np.asarray(samples, dtype=np.float32).copy())
-        self.result = self.acquisition.process(evaluated.values, channel=1)
+        self.result = self._process_values(evaluated.values)
         return self.result
+
+    def _process_values(self, values):
+        if self.math.config.operation not in ("divide", "sqrt", "ln", "log10"):
+            return self.acquisition.process(values, channel=1)
+        # El segundo estado interno de MATH propaga los huecos por la misma
+        # ventana temporal. Es independiente de los canales de entrada.
+        missing = np.isnan(values)
+        result = self.acquisition.process(np.where(missing, 0.0, values), channel=1)
+        coverage = self.acquisition.process(missing.astype(np.float32), channel=2)
+        if isinstance(result, EnvelopeResult):
+            invalid = coverage.maximum > 0
+            return replace(result, minimum=np.where(invalid, np.nan, result.minimum),
+                           maximum=np.where(invalid, np.nan, result.maximum))
+        return np.where(coverage > 0, np.nan, result)
 
     def configure_math(self, **changes):
         self.math.configure(**changes)
@@ -163,7 +177,7 @@ class MathTraceProcessor:
         # Reprocesar pares retenidos conserva correlación y signo de la resta.
         for capture in self.history:
             values = self.math.evaluate(capture, self.sample_rate).values
-            self.result = self.acquisition.process(values, channel=1)
+            self.result = self._process_values(values)
         return self.result
 
     def replace_sampling_capture(self, samples, sample_rate):
