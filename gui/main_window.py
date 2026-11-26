@@ -260,10 +260,7 @@ class MainWindow(QMainWindow):
              scope.controls.simulator_controls_ch2),
             config["simulator"],
         ):
-            index = panel.waveform.findData(settings["waveform"])
-            if index < 0:
-                raise ValueError("Forma de onda no disponible")
-            panel.waveform.setCurrentIndex(index)
+            panel.set_waveform(settings["waveform"])
             panel.frequency.setValue(settings["frequency"])
             panel.amplitude.setValue(settings["amplitude"])
             panel.frequency_2.setValue(settings.get("frequency_2", 3000.0))

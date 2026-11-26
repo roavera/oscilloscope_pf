@@ -98,7 +98,7 @@ class OscilloscopeControls(QWidget):
         self.cursor_controls.setToolTip("Elegí CH1 o CH2 como referencia de los cursores de tensión y Track.")
         self.simulator_controls = SimulatorControls()
         self.simulator_controls_ch2 = SimulatorControls(channel="CH2")
-        self.simulator_controls_ch2.waveform.setCurrentIndex(1)
+        self.simulator_controls_ch2.set_waveform("square")
         self.simulator_controls_ch2.frequency.setValue(500.0)
 
         for panel in (
@@ -158,7 +158,7 @@ class OscilloscopeControls(QWidget):
             ("cursors", "CURSORES"),
             ("math", "MATH"),
             ("filters", "FILTROS"),
-            ("simulator", "SIMULADOR"),
+            ("simulator", "Generador de funciones"),
         ):
             button = QPushButton(title, self)
             button.setCheckable(True)
@@ -182,7 +182,7 @@ class OscilloscopeControls(QWidget):
             """)
             self.navigation_group.addButton(button)
             self.navigation_buttons[key] = button
-            nav.addWidget(button, 1)
+            nav.addWidget(button, 2 if key == "simulator" else 1)
 
         layout.addLayout(nav)
 
