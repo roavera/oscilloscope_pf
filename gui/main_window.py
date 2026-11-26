@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self.status_timer.timeout.connect(self._update_status)
         self.status_timer.start()
         self._update_status()
+        QTimer.singleShot(0, lambda: self._open_oscilloscope(initial_source=AcquisitionManager.SIMULATOR))
         
     
     def _transition_to(self, page):
@@ -196,10 +197,10 @@ class MainWindow(QMainWindow):
         animation.start()
 
     @Slot()
-    def _open_oscilloscope(self):
+    def _open_oscilloscope(self, *, initial_source=None):
         manager = self.oscilloscope.acquisition
         dialog = AcquisitionSourceDialog(
-            current_source=manager.source,
+            current_source=initial_source or manager.source,
             current_channels=manager.channels,
             current_usb_port=manager.usb_port,
             current_audio_device=manager.device,
@@ -211,18 +212,7 @@ class MainWindow(QMainWindow):
             (dialog.sim_ch1, self.oscilloscope.controls.simulator_controls),
             (dialog.sim_ch2, self.oscilloscope.controls.simulator_controls_ch2),
         ):
-            settings = live_panel.get_settings()
-            waveform_index = form.waveform.findData(settings["waveform"])
-            if waveform_index >= 0:
-                form.waveform.setCurrentIndex(waveform_index)
-            form.frequency.setValue(settings["frequency"])
-            form.amplitude.setValue(settings["amplitude"])
-            form.frequency_2.setValue(settings.get("frequency_2", 3000.0))
-            form.amplitude_2.setValue(settings.get("amplitude_2", 0.75))
-            form.offset.setValue(settings["offset"])
-            form.noise.setValue(settings["noise"])
-            form.enabled.setChecked(settings["enabled"])
-            form._update_enabled(form.enabled.isChecked())
+            form.set_settings(live_panel.get_settings())
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
@@ -260,14 +250,7 @@ class MainWindow(QMainWindow):
              scope.controls.simulator_controls_ch2),
             config["simulator"],
         ):
-            panel.set_waveform(settings["waveform"])
-            panel.frequency.setValue(settings["frequency"])
-            panel.amplitude.setValue(settings["amplitude"])
-            panel.frequency_2.setValue(settings.get("frequency_2", 3000.0))
-            panel.amplitude_2.setValue(settings.get("amplitude_2", 0.75))
-            panel.offset.setValue(settings["offset"])
-            panel.noise.setValue(settings["noise"])
-            panel.channel_enabled.setChecked(settings["enabled"])
+            panel.set_settings(settings)
 
         # Un canal centrado; dos canales en 25 % y 75 % de la altura.
         scope.controls.ch2_controls.visible_checkbox.setChecked(count == 2)
@@ -449,7 +432,7 @@ class MainWindow(QMainWindow):
         self.source_actions = {}
         for source, label in (
             (AcquisitionManager.AUDIO, "Audio (sounddevice)"),
-            (AcquisitionManager.SIMULATOR, "Blackpill simulada (tramas USB)"),
+            (AcquisitionManager.SIMULATOR, "Generador de funciones"),
             (AcquisitionManager.BLACKPILL_USB, "Blackpill USB COM"),
         ):
             action = QAction(label, self)
@@ -718,7 +701,7 @@ class MainWindow(QMainWindow):
         manager = self.oscilloscope.acquisition
         labels = {
             manager.AUDIO: "Audio (sounddevice)",
-            manager.SIMULATOR: "Blackpill simulada (tramas USB)",
+            manager.SIMULATOR: "Generador de funciones",
             manager.BLACKPILL_USB: "Blackpill USB COM",
         }
         states = {

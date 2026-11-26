@@ -12,74 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from acquisition.acquisition_manager import AcquisitionManager
-
-
-class SimulatorChannelForm(QGroupBox):
-    """Parámetros de una entrada virtual, en voltios simulados."""
-
-    def __init__(self, number: int, parent=None):
-        super().__init__(f"Señal CH{number}", parent)
-        self.number = number
-        self.setObjectName("sourceChannelGroup")
-        self.enabled = QCheckBox(f"Habilitar CH{number}")
-        self.enabled.setChecked(True)
-
-        self.waveform = QComboBox()
-        self.waveform.addItem("Senoidal", "sine")
-        self.waveform.addItem("Cuadrada", "square")
-        self.waveform.addItem("Triangular", "triangle")
-        self.waveform.addItem("Dos tonos", "two_tone")
-
-        self.frequency = self._spin(1.0, 20_000.0, 1000.0 if number == 1 else 500.0,
-                                    10.0, " Hz", 2)
-        self.amplitude = self._spin(0.0, 3.0, 1.5, 0.05, " V", 3)
-        self.frequency_2 = self._spin(1.0, 20_000.0, 3000.0, 10.0, " Hz", 2)
-        self.amplitude_2 = self._spin(0.0, 3.0, 0.75, 0.05, " V", 3)
-        self.offset = self._spin(-3.0, 3.0, 0.0, 0.05, " V", 3)
-        self.noise = self._spin(0.0, 3.0, 0.0, 0.005, " V RMS", 3)
-        if number == 2:
-            self.waveform.setCurrentIndex(1)
-
-        form = QFormLayout(self)
-        form.addRow(self.enabled)
-        form.addRow("Forma de onda:", self.waveform)
-        form.addRow("Frecuencia:", self.frequency)
-        form.addRow("Amplitud pico:", self.amplitude)
-        form.addRow("Frecuencia 2:", self.frequency_2)
-        form.addRow("Amplitud 2:", self.amplitude_2)
-        form.addRow("Offset:", self.offset)
-        form.addRow("Ruido (σ):", self.noise)
-        self.enabled.toggled.connect(self._update_enabled)
-
-    @staticmethod
-    def _spin(minimum, maximum, initial, step, suffix, decimals):
-        control = QDoubleSpinBox()
-        control.setRange(minimum, maximum)
-        control.setDecimals(decimals)
-        control.setSingleStep(step)
-        control.setSuffix(suffix)
-        control.setValue(initial)
-        return control
-
-    def _update_enabled(self, active: bool):
-        for widget in (self.waveform, self.frequency, self.amplitude,
-                       self.frequency_2, self.amplitude_2, self.offset, self.noise):
-            widget.setEnabled(active)
-        is_two_tone = active and self.waveform.currentData() == "two_tone"
-        self.frequency_2.setEnabled(is_two_tone)
-        self.amplitude_2.setEnabled(is_two_tone)
-
-    def settings(self):
-        return {
-            "enabled": self.enabled.isChecked(),
-            "waveform": self.waveform.currentData(),
-            "frequency": self.frequency.value(),
-            "amplitude": self.amplitude.value(),
-            "frequency_2": self.frequency_2.value(),
-            "amplitude_2": self.amplitude_2.value(),
-            "offset": self.offset.value(),
-            "noise": self.noise.value(),
-        }
+from gui.panels.simulator_controls import SimulatorControls
 
 
 class PhysicalGeneratorChannelForm(QGroupBox):
@@ -96,11 +29,11 @@ class PhysicalGeneratorChannelForm(QGroupBox):
         self.waveform.addItem("Triangular", 2)
         if number == 2:
             self.waveform.setCurrentIndex(1)
-        self.frequency = SimulatorChannelForm._spin(
+        self.frequency = SimulatorControls._spin(
             0.001, 1_000_000.0, 1000.0 if number == 1 else 500.0,
             100.0, " Hz", 3,
         )
-        self.amplitude = SimulatorChannelForm._spin(
+        self.amplitude = SimulatorControls._spin(
             0.0, 100.0, 50.0, 5.0, " % FS", 0,
         )
         form = QFormLayout(self)
@@ -150,7 +83,7 @@ class AcquisitionSourceDialog(QDialog):
         form = QFormLayout()
         self.source = QComboBox()
         self.source.addItem("Audio de la computadora", AcquisitionManager.AUDIO)
-        self.source.addItem("Generador de señales (simulador)", AcquisitionManager.SIMULATOR)
+        self.source.addItem("Generador de funciones", AcquisitionManager.SIMULATOR)
         self.source.addItem("Blackpill física (USB CDC)", AcquisitionManager.BLACKPILL_USB)
         form.addRow(self._field_label("Fuente de adquisición:"), self.source)
 
@@ -307,8 +240,10 @@ class AcquisitionSourceDialog(QDialog):
         hint.setObjectName("sourceDialogHint")
         layout.addWidget(hint)
         self.sim_tabs = QTabWidget()
-        self.sim_ch1 = SimulatorChannelForm(1)
-        self.sim_ch2 = SimulatorChannelForm(2)
+        self.sim_ch1 = SimulatorControls(channel="CH1")
+        self.sim_ch2 = SimulatorControls(channel="CH2")
+        self.sim_ch2.set_waveform("square")
+        self.sim_ch2.frequency.setValue(500.0)
         self.sim_tabs.addTab(self.sim_ch1, "CH1")
         self.sim_tabs.addTab(self.sim_ch2, "CH2")
         layout.addWidget(self.sim_tabs)
@@ -419,7 +354,7 @@ class AcquisitionSourceDialog(QDialog):
             "channels": self.channel_count.currentData(),
             "usb_port": self._selected_port(),
             "audio_device": self.audio_device.currentData(),
-            "simulator": [self.sim_ch1.settings(), self.sim_ch2.settings()],
+            "simulator": [self.sim_ch1.get_settings(), self.sim_ch2.get_settings()],
             "physical_generator": (
                 [self.physical_ch1.settings(), self.physical_ch2.settings()]
                 if self.configure_hardware_generator.isChecked() else None

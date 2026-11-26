@@ -148,6 +148,14 @@ class SimulatorControls(QGroupBox):
         self.form.setRowVisible(self.duty, kind == "pulse")
         self.settings_changed.emit(self.get_settings())
 
+    def set_settings(self, settings):
+        """Carga todos los parámetros del canal, incluido el duty normalizado."""
+        self.set_waveform(settings["waveform"])
+        for name in ("frequency", "amplitude", "frequency_2", "amplitude_2", "offset", "noise"):
+            getattr(self, name).setValue(settings[name])
+        self.duty.setValue(settings["duty"] * 100)
+        self.channel_enabled.setChecked(settings["enabled"])
+
     def get_settings(self):
         return {
             "enabled": self.channel_enabled.isChecked(),
