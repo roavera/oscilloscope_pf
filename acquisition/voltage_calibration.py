@@ -2,7 +2,7 @@
 
 Las muestras de entrada son floats normalizados decodificados de PCM24, no V.
 La señal de trabajo se expresa como V = G * raw + offset, por canal.
-La Blackpill simulada representa un ADC virtual de +/-3 V; la Blackpill
+La Blackpill simulada usa un rango automático por canal; la Blackpill
 física NO recibe una escala nominal inventada hasta realizar calibración.
 """
 
@@ -51,6 +51,7 @@ class VoltageCalibration:
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path is not None else CALIBRATION_PATH
+        self.simulator_scales = dict.fromkeys((1, 2), SIMULATOR_FULL_SCALE_VOLTS)
         self._physical = {1: ChannelCalibration(), 2: ChannelCalibration()}
         self._verified = {1: False, 2: False}
         self.audio_profiles = {}
@@ -92,7 +93,7 @@ class VoltageCalibration:
         if channel not in (1, 2):
             raise ValueError("Canal inválido")
         if source == SOURCE_SIMULATOR:
-            return ChannelCalibration(SIMULATOR_FULL_SCALE_VOLTS, 0.0)
+            return ChannelCalibration(self.simulator_scales[channel], 0.0)
         if source == SOURCE_BLACKPILL:
             return self._physical[channel]
         if source == SOURCE_AUDIO:
@@ -116,7 +117,7 @@ class VoltageCalibration:
 
     def status(self, source: str) -> str:
         if source == SOURCE_SIMULATOR:
-            return "Simulación ±3 V (escala virtual)"
+            return "Generador de funciones · rango automático"
         if source == SOURCE_BLACKPILL:
             if all(self._verified.values()):
                 return "Blackpill CH1/CH2 calibrados"
@@ -167,17 +168,27 @@ class VoltageCalibration:
                 os.unlink(temp)
 
 
-def simulator_volts_to_normalized(settings: dict) -> dict:
-    """Convierte SOLO los tres parámetros de interfaz expresados en V.
+def simulator_full_scale(settings: dict) -> float:
+    """Rango positivo del canal en voltios, con margen para ruido gaussiano."""
+    peak = abs(float(settings["amplitude"]))
+    if settings["waveform"] == "two_tone":
+        peak += abs(float(settings["amplitude_2"]))
+    offset = abs(float(settings["offset"]))
+    noise_margin = 6.0 * abs(float(settings["noise"]))
+    return max(SIMULATOR_FULL_SCALE_VOLTS, offset + peak + noise_margin)
 
-    El protocolo de comunicación y configure_simulator() siguen normalizados.
-    Una señal por encima de +/-3 V se satura como en un ADC real.
-    """
+
+def simulator_volts_to_normalized(
+    settings: dict, full_scale: float = SIMULATOR_FULL_SCALE_VOLTS
+) -> dict:
+    """Convierte los parámetros en voltios al rango PCM24 del canal."""
+    if not math.isfinite(full_scale) or full_scale <= 0:
+        raise ValueError("El rango virtual debe ser positivo y finito")
     converted = dict(settings)
-    for name in ("amplitude", "offset", "noise"):
+    for name in ("amplitude", "amplitude_2", "offset", "noise"):
         if name in converted:
             value = float(converted[name])
             if not math.isfinite(value):
                 raise ValueError(f"{name} debe ser finito")
-            converted[name] = value / SIMULATOR_FULL_SCALE_VOLTS
+            converted[name] = value / full_scale
     return converted

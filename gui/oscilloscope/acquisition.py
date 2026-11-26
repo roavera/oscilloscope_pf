@@ -5,7 +5,10 @@ import numpy as np
 from trigger.pulse_width import PulseWidthTrigger
 from acquisition.acquisition_manager import AcquisitionManager
 from acquisition.stereo_buffer import StereoBuffer
-from acquisition.voltage_calibration import simulator_volts_to_normalized
+from acquisition.voltage_calibration import (
+    simulator_full_scale,
+    simulator_volts_to_normalized,
+)
 
 
 class AcquisitionMixin:
@@ -25,6 +28,17 @@ class AcquisitionMixin:
         with self._buffer_lock:
             self._source_generation += 1
             generation = self._source_generation
+        if self.acquisition.source == AcquisitionManager.SIMULATOR:
+            panels = (
+                self.controls.simulator_controls,
+                self.controls.simulator_controls_ch2,
+            )
+            for channel, panel in enumerate(panels, start=1):
+                settings = panel.get_settings()
+                self.voltage_calibration.simulator_scales[channel] = (
+                    simulator_full_scale(settings)
+                )
+
         self.reset_acquisition(self.acquisition.sample_rate)
         self.acquisition.on_state_changed = (
             lambda state: self._reader_state.emit(generation, state)
@@ -194,7 +208,16 @@ class AcquisitionMixin:
         if self.acquisition.source == AcquisitionManager.SIMULATOR and self.acquisition.is_running:
             try:
                 # La interfaz trabaja en voltios, el simulador en PCM24 normalizado.
-                normalized = simulator_volts_to_normalized(settings)
+                if channel >= self.acquisition.channels:
+                    return
+                full_scale = simulator_full_scale(settings)
+                current_scale = self.voltage_calibration.simulator_scales[channel + 1]
+                if full_scale != current_scale:
+                    # Una adquisición nueva evita reinterpretar muestras anteriores
+                    # con la ganancia nueva. Al conectar se reaplican ambos paneles.
+                    self.reconnect_acquisition()
+                    return
+                normalized = simulator_volts_to_normalized(settings, full_scale)
                 self.configure_simulator(channel=channel, **normalized)
             except (ValueError, RuntimeError) as exc:
                 self.acquisition_error.emit(str(exc))

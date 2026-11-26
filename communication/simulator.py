@@ -23,7 +23,7 @@ Comandos:
     PING     -> responder PONG
 
 Características:
-    - Frecuencia de muestreo nominal: 97656.25 Hz.
+    - Frecuencia de muestreo nominal:
     - Audio PCM24 little-endian.
     - Bloques de 256 muestras por canal.
     - Generación de señales senoidales, cuadradas, triangulares y chirp.
