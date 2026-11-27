@@ -17,6 +17,7 @@ class InterfaceMixin:
         layout.setSpacing(0)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setObjectName("scopeMainSplitter")
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(5)
 

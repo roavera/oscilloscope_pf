@@ -32,7 +32,7 @@ class ChannelMarker(QGraphicsObject):
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(painter.RenderHint.Antialiasing)
         color = (PLOT_COLORS[self.plot.display_theme]["ch1"]
-                 if self.channel == 1 else "#38cfff")
+                 if self.channel == 1 else ("#38cfff" if self.plot.display_theme == "dark" else "#007FA5"))
         painter.setPen(QPen(QColor(color).darker(130), 1))
         painter.setBrush(QBrush(QColor(color)))
         painter.drawPolygon(QPolygonF([
@@ -229,7 +229,7 @@ class OscilloscopePlot(QWidget):
         )
 
         for channel in (1, 2):
-            color = QColor(colors["ch1"] if channel == 1 else "#38cfff")
+            color = QColor(colors["ch1"] if channel == 1 else ("#38cfff" if theme_name == "dark" else "#007FA5"))
             for curve in self.envelope_curves[channel]:
                 curve.setPen(pg.mkPen(color, width=1.3))
             color.setAlpha(55)
@@ -294,6 +294,17 @@ class OscilloscopePlot(QWidget):
         self.plot_widget.update()
         
         self.grid.set_theme(theme_name)
+        # SCOPE_DAY_V4_PLOT
+        self.channel_legend.setColor('#a8b5c8' if theme_name == 'dark' else '#40576D')
+        self.measurement_overlay.setColor('#f4d35e' if theme_name == 'dark' else '#856300')
+        for i, line in enumerate(self.cursor_lines):
+            color = (('#33d6e8', '#ffad4d') if theme_name == 'dark' else ('#007F9C', '#A55300'))[i]
+            line.setPen(pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine))
+            line.setHoverPen(pg.mkPen(color, width=3))
+            self.cursor_points[i].setBrush(pg.mkBrush(color))
+            self.cursor_labels[i].setColor(color if theme_name == 'dark' else '#183149')
+            self.cursor_labels[i].fill = pg.mkBrush(21,26,34,235) if theme_name == 'dark' else pg.mkBrush(255,255,255,240)
+            self.cursor_labels[i].border = pg.mkPen(color, width=.6)
         self._style_timebase_readout()
         self._refresh_channel_curves()
         self._refresh_math()
@@ -749,7 +760,7 @@ class OscilloscopePlot(QWidget):
             color = "#55e68b" if self.display_theme == "dark" else "#168a4b"
             width = 1.6
         else:
-            color = PLOT_COLORS[self.display_theme]["ch1"] if channel == 1 else "#38cfff"
+            color = PLOT_COLORS[self.display_theme]["ch1"] if channel == 1 else ("#38cfff" if self.display_theme == "dark" else "#007FA5")
             width = 2.0
         if self.interpolation_mode == "none":
             # Evita miles de objetos gráficos en escalas de tiempo grandes.

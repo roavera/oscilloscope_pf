@@ -29,7 +29,7 @@ class MeasurementControls(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         header = QHBoxLayout()
         title = QLabel("Mediciones automáticas")
-        title.setStyleSheet("font-weight: bold;")
+        title.setProperty("panelHeading", True)
         header.addWidget(title, 1)
         add = QPushButton("+ Mediciones")
         add.clicked.connect(self._catalog)
@@ -42,6 +42,8 @@ class MeasurementControls(QWidget):
             button = QPushButton(label)
             button.setCheckable(True)
             self.channel.addButton(button, idx)
+            button.setProperty("measurementSelector", True)
+            button.setProperty("measurementChannel", ("both", "ch1", "ch2")[idx])
             options.addWidget(button)
         self.channel.button(0).setChecked(True)
         self.channel.button(0).setToolTip("Mostrar ambos canales sin modificar la adquisición.")
@@ -65,6 +67,11 @@ class MeasurementControls(QWidget):
         self.cards_layout.setContentsMargins(0, 0, 4, 0)
         self.cards_layout.setSpacing(7)
         self.scroll.setWidget(self.content)
+        # CONTENEDORES_TEMA_FIX_V1
+        self.scroll.viewport().setObjectName("measurementViewport")
+        self.content.setObjectName("measurementContent")
+        self.content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout.addWidget(self.scroll, 1)
         self.show_overlay = QCheckBox("Mostrar resultados sobre el gráfico")
         layout.addWidget(self.show_overlay)
@@ -85,12 +92,7 @@ class MeasurementControls(QWidget):
         label, tip = self._labels[key]
         card = QFrame()
         card.setObjectName("measurementCard")
-        card.setStyleSheet("""
-            QFrame#measurementCard { background: #202936; border: 1px solid #354356; border-radius: 7px; }
-            QFrame#measurementCard QLabel { background: transparent; border: none; color: #e2eaf4; }
-            QFrame#measurementCard QPushButton { background: transparent; color: #aab8ca; border: none; padding: 0; }
-            QFrame#measurementCard QPushButton:hover { color: white; background: #46566b; }
-        """)
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         card.setToolTip(tip)
         v = QVBoxLayout(card)
         v.setContentsMargins(9, 6, 9, 6)
@@ -113,9 +115,13 @@ class MeasurementControls(QWidget):
             h.setSpacing(4)
             color = "#e2eaf4" if pair else ("#f3d34e" if ch == 0 else "#63c7ef")
             tag = QLabel("CH1 → CH2" if pair else f"CH{ch+1}")
-            tag.setStyleSheet(f"color: {color}; font-size: 11px;")
+            tag.setProperty("measurementChannel", "pair" if pair else f"ch{ch+1}")
+            tag.setProperty("scopeRole", "pair" if pair else ("ch1" if ch == 0 else "ch2"))
+            tag.setStyleSheet('font-size: 11px;')
             value = QLabel("—")
-            value.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: 600;")
+            value.setProperty("measurementChannel", "pair" if pair else f"ch{ch+1}")
+            value.setProperty("scopeRole", "pair" if pair else ("ch1" if ch == 0 else "ch2"))
+            value.setStyleSheet('font-size: 15px; font-weight: 600;')
             value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             h.addWidget(tag)
             h.addWidget(value, 1)
@@ -123,8 +129,10 @@ class MeasurementControls(QWidget):
             rows[ch] = (row, value)
         if pair:
             desc = QLabel(tip)
+            desc.setProperty("measurementSecondary", True)
             desc.setWordWrap(True)
-            desc.setStyleSheet("color: #aab8ca; font-size: 10px;")
+            desc.setProperty("scopeRole", "muted")
+            desc.setStyleSheet('font-size: 10px;')
             v.addWidget(desc)
         self._rows.append((key, rows))
         return card
@@ -197,7 +205,8 @@ class MeasurementControls(QWidget):
             if not chosen:
                 continue
             section = QLabel(group if group != "Entre canales" else "Entre canales · CH1 → CH2")
-            section.setStyleSheet("font-weight: 600;")
+            section.setProperty("measurementHeading", True)
+            section.setProperty("panelHeading", True)
             self.cards_layout.addWidget(section)
             holder = QWidget()
             grid = QGridLayout(holder)

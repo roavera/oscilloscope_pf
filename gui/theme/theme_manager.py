@@ -1,5 +1,6 @@
 
 """Administración de temas visuales de OSCILOSCOPIO."""
+from gui.theme.day_style import apply_day_palette, refresh_day_widgets
 
 from pathlib import Path
 
@@ -50,7 +51,9 @@ class ThemeManager(QObject):
             encoding="utf-8"
         )
 
+        apply_day_palette(app, theme_name)
         app.setStyleSheet(stylesheet)
+        refresh_day_widgets(app)
 
         self.current_theme = theme_name
         self.settings.setValue(

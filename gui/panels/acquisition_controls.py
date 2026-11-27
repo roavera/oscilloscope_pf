@@ -44,23 +44,9 @@ class AcquisitionControls(QGroupBox):
         self.settings_button = QPushButton("ADQUISICIÓN")
         self.settings_button.setToolTip("Configurar modo de adquisición e interpolación")
 
-        self.run_button.setStyleSheet("""
-            QPushButton {background:#198754;color:white;border:0;border-radius:5px;
-                         font-weight:bold;padding:3px 6px;}
-            QPushButton:hover:enabled {background:#157347;}
-            QPushButton:disabled {background:#344d40;color:#8fa99a;}
-        """)
-        self.stop_button.setStyleSheet("""
-            QPushButton {background:#dc3545;color:white;border:0;border-radius:5px;
-                         font-weight:bold;padding:3px 6px;}
-            QPushButton:hover:enabled {background:#bb2d3b;}
-            QPushButton:disabled {background:#57383d;color:#b09a9d;}
-        """)
-        self.settings_button.setStyleSheet("""
-            QPushButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
-                         border-radius:5px;font-weight:bold;padding:3px 6px;}
-            QPushButton:hover:enabled {background:#465d76;}
-        """)
+        self.run_button.setProperty("role", "success")
+        self.stop_button.setProperty("role", "danger")
+        self.settings_button.setProperty("role", "accent")
         for button in (self.run_button, self.stop_button, self.settings_button):
             button.setMinimumHeight(23)
             buttons.addWidget(button, 1)
@@ -71,38 +57,22 @@ class AcquisitionControls(QGroupBox):
             "Aplicar la configuración inicial del osciloscopio"
         )
         self.default_button.setMinimumHeight(24)
-        self.default_button.setStyleSheet("""
-            QPushButton {background:#805b2a;color:#fff4dc;border:1px solid #b88745;
-                         border-radius:5px;font-weight:bold;padding:2px 6px;}
-            QPushButton:hover:enabled {background:#a87332;}
-        """)
+        self.default_button.setProperty("role", "warning")
         persistence = QHBoxLayout()
         self.autostore_button = QPushButton("AUTOSTORE")
         self.autostore_button.setCheckable(True)
-        self.autostore_button.setStyleSheet("""
-            QPushButton {background:#34465a;color:#f0f4f8;border:1px solid #60758b;
-                         border-radius:5px;font-weight:bold;padding:2px 6px;}
-            QPushButton:checked {background:#198754;color:white;border-color:#35b878;}
-            QPushButton:hover:enabled {background:#465d76;}
-            QPushButton:checked:hover:enabled {background:#157347;}
-        """)
+        self.autostore_button.setProperty("role", "toggle")
         self.autostore_button.setToolTip("Superponer capturas hasta pulsar ERASE")
         self.erase_button = QPushButton("ERASE")
         self.erase_button.setToolTip("Borrar las capturas persistentes")
-        self.erase_button.setStyleSheet("""
-            QPushButton {background:#5b3b42;color:#ffe8eb;border:1px solid #86565f;
-                         border-radius:5px;font-weight:bold;padding:2px 6px;}
-            QPushButton:hover:enabled {background:#754650;}
-        """)
+        self.erase_button.setProperty("role", "danger")
         for button in (self.default_button, self.autostore_button, self.erase_button):
             button.setMinimumHeight(23)
             persistence.addWidget(button, 1)
         layout.addLayout(persistence)
 
         self.feature_status_label = QLabel("MATH OFF · FILTRO OFF · AUTOSTORE OFF")
-        self.feature_status_label.setStyleSheet(
-            "color:#9fb0c4;font-size:9px;padding:0px 2px;"
-        )
+        self.feature_status_label.setObjectName("featureStatusLabel")
         self.feature_status_label.setToolTip("Estado de las funciones adicionales")
         layout.addWidget(self.feature_status_label)
 

@@ -1,4 +1,5 @@
 """Vista XY independiente; conserva intacta la vista temporal."""
+from gui.theme.day_style import day_color
 import math
 import csv
 import numpy as np
@@ -114,9 +115,10 @@ class XYPanel(QWidget):
             self.xy_plot.getAxis(name).setTickSpacing(1, .5)
             self.xy_plot.getAxis(name).setTextPen('#c3cbd6')
             self.xy_plot.getAxis(name).setPen('#738094')
-        self.curve = self.xy_plot.plot([], [], pen=pg.mkPen('#6cdb97', width=1.6))
+        self.curve = self.xy_plot.plot([], [], pen=pg.mkPen(day_color('#6cdb97', '#007D65'), width=1.6))
         self.scope.layout().insertWidget(0, self.xy_plot, 1)
         self.xy_plot.hide()
+        self._scope_v4_refresh()
         self.math_button.clicked.connect(lambda: self.activate(False))
         self.xy_button.clicked.connect(lambda: self.activate(True))
         swap.clicked.connect(self.swap)
@@ -128,6 +130,16 @@ class XYPanel(QWidget):
         self.timer.setInterval(80)
         self.timer.timeout.connect(self.refresh)
         self.sync_controls()
+
+    def _scope_v4_refresh(self):
+        self.xy_plot.setBackground(day_color('#151b24', '#FFFFFF'))
+        for name in ('bottom', 'left'):
+            axis = self.xy_plot.getAxis(name)
+            axis.setTextPen(day_color('#c3cbd6', '#40576D'))
+            axis.setPen(day_color('#738094', '#AEBFD0'))
+        self.curve.setPen(pg.mkPen(day_color('#6cdb97', '#007D65'), width=1.6)
+                          if self.drawing.currentIndex() == 0 else None)
+        self.curve.setSymbolBrush(day_color('#6cdb97', '#007D65'))
 
     def sync_controls(self, *_):
         for scale in self.scales:
@@ -224,9 +236,9 @@ class XYPanel(QWidget):
             self.xy_plot.setLabel(axis, f'{"X" if i == 0 else "Y"} · CH{channels[i]+1} · {scales[i]:.5g} {units[i]}/div')
         points = self.drawing.currentIndex() == 1
         self.curve.setData(values[:,0], values[:,1], connect='finite',
-                           pen=None if points else pg.mkPen('#6cdb97', width=1.6),
+                           pen=None if points else pg.mkPen(day_color('#6cdb97', '#007D65'), width=1.6),
                            symbol='o' if points else None, symbolSize=3,
-                           symbolPen=None, symbolBrush='#6cdb97')
+                           symbolPen=None, symbolBrush=day_color('#6cdb97', '#007D65'))
         self.last_pairs = data.copy()
         self.last_meta = (channels, units)
         state = 'RUN' if self.owner.running else 'STOP · última captura'

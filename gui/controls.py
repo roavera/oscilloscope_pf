@@ -195,19 +195,7 @@ class OscilloscopeControls(QWidget):
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Fixed,
             )
-            button.setStyleSheet("""
-                QPushButton {
-                    background: #283648;
-                    color: #e5edf7;
-                    border: 1px solid #3e5066;
-                    border-radius: 4px;
-                    padding: 2px 1px;
-                    font-size: 9px;
-                    font-weight: 600;
-                }
-                QPushButton:checked { background: #496488; }
-                QPushButton:hover { background: #3b506b; }
-            """)
+            button.setObjectName("navButton")
             self.navigation_group.addButton(button)
             self.navigation_buttons[key] = button
             nav.addWidget(button, 2 if key == "simulator" else 1)

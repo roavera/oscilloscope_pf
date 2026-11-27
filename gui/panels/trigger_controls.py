@@ -45,12 +45,7 @@ class TriggerControls(QGroupBox):
         self.settings_button = QPushButton("CONFIGURACIÓN")
         self.settings_button.setMinimumHeight(25)
         self.settings_button.setToolTip("Configurar tipo, modo y flanco del disparo")
-        self.settings_button.setStyleSheet("""
-            QPushButton {background:#34465a;color:#f0f4f8;
-                border:1px solid #60758b;border-radius:5px;
-                font-weight:bold;padding:5px 6px;}
-            QPushButton:hover:enabled {background:#465d76;}
-        """)
+        self.settings_button.setProperty("role", "accent")
         self.settings_button.setText("Config.")
         self.settings_button.setToolTip("Configuración de trigger: tipo, modo y flanco")
 
@@ -59,13 +54,7 @@ class TriggerControls(QGroupBox):
         self.single_button.setToolTip(
             "Espera un disparo válido, captura una vez y congela la pantalla."
         )
-        self.single_button.setStyleSheet("""
-            QPushButton {background-color:#805ad5;color:white;border:none;
-                border-radius:5px;font-weight:bold;padding:4px 6px;}
-            QPushButton:hover:enabled {background-color:#6b46c1;}
-            QPushButton:pressed:enabled {background-color:#553c9a;}
-            QPushButton:disabled {background-color:#454052;color:#9992a8;}
-        """)
+        self.single_button.setProperty("role", "violet")
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(4)
@@ -77,12 +66,7 @@ class TriggerControls(QGroupBox):
             "Calcula un umbral de disparo desde el canal seleccionado. "
             "No modifica las muestras ni las escalas."
         )
-        self.auto_level_button.setStyleSheet("""
-            QPushButton {background:#205c68;color:#f2fcff;border:1px solid #4e8b9a;
-                border-radius:5px;font-weight:bold;padding:4px 6px;}
-            QPushButton:hover:enabled {background:#28788a;}
-            QPushButton:disabled {background:#374650;color:#9caeb7;}
-        """)
+        self.auto_level_button.setProperty("role", "accent")
         actions.addWidget(self.auto_level_button, 1)
         layout.addLayout(actions)
 

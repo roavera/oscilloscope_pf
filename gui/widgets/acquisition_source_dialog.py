@@ -134,16 +134,16 @@ class AcquisitionSourceDialog(QDialog):
         dark = getattr(theme_manager, "current_theme", "dark") != "light"
         if dark:
             bg, title, text, soft, line = (
-                "#151A22", "#F4F8FE", "#EDF2F8", "#C4D5E8", "#4398F7"
+                "#0B1523", "#F2F8FF", "#D7E6F5", "#A0B5CB", "#32D3E8"
             )
-            panel, panel_border = "#192332", "#4A6482"
-            button_bg, button_hover, button_border = "#1A5AAB", "#2474D0", "#509CFF"
+            panel, panel_border = "#142336", "#344B62"
+            button_bg, button_hover, button_border = "#174D65", "#20647A", "#32D3E8"
         else:
             bg, title, text, soft, line = (
-                "#F1F4F8", "#192C46", "#202A38", "#445D78", "#3272C9"
+                "#E8EFF5", "#183149", "#40576D", "#526B83", "#007F9C"
             )
-            panel, panel_border = "#F9FBFF", "#B4C8E1"
-            button_bg, button_hover, button_border = "#2468BB", "#1F559B", "#205BA5"
+            panel, panel_border = "#F8FAFC", "#C4D3E0"
+            button_bg, button_hover, button_border = "#00728C", "#005B70", "#007F9C"
 
         # El estilo del tab se define además en dark.qss y light.qss:
         # así se corrigen todas las pestañas de la aplicación.

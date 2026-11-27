@@ -1,4 +1,5 @@
 """Panel de filtros: edición explícita y respuesta teórica del diseño."""
+from gui.theme.day_style import day_color
 import numpy as np
 import pyqtgraph as pg
 from scipy.signal import freqz, sosfreqz
@@ -112,6 +113,7 @@ class FilterControls(QGroupBox):
             marker.hide()
             self.markers.append(marker)
         layout.addWidget(self.response)
+        self._scope_v4_refresh()
         self.preview_note = QLabel('Respuesta teórica del diseño seleccionado (no FFT de la señal).')
         self.preview_note.setWordWrap(True)
         layout.addWidget(self.preview_note)
@@ -138,6 +140,19 @@ class FilterControls(QGroupBox):
         self.apply_button.clicked.connect(self._emit)
         self.reset_button.clicked.connect(self.reset)
         self._edited()
+
+    def _scope_v4_refresh(self):
+        self.response.setBackground(day_color('#17202b', '#FFFFFF'))
+        axis_color = day_color('#dce5ef', '#40576D')
+        for name in ('left', 'bottom'):
+            axis = self.response.getAxis(name)
+            axis.setPen(pg.mkPen(day_color('#8495a8', '#AEBFD0')))
+            axis.setTextPen(pg.mkPen(axis_color))
+        self.response.setLabel('left', 'Ganancia', units='dB', color=axis_color)
+        self.response.setLabel('bottom', 'Frecuencia', units='Hz', color=axis_color)
+        self.curve.setPen(pg.mkPen(day_color('#6cdb97', '#007D65'), width=2))
+        for marker in self.markers:
+            marker.setPen(pg.mkPen(day_color('#f0bd62', '#986000'), width=1, style=Qt.PenStyle.DashLine))
 
     @staticmethod
     def _frequency_input(value):

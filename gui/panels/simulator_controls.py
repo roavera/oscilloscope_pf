@@ -1,4 +1,5 @@
 """Panel para configurar y habilitar la entrada simulada de un canal."""
+from gui.theme.day_style import is_day, day_color
 from math import pi, sin
 
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
@@ -22,7 +23,7 @@ def wave_icon(kind):
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor("#61dbbb"), 1.8))
+    painter.setPen(QPen(QColor(day_color("#61dbbb", "#007D65")), 1.8))
     path = QPainterPath()
     previous = None
     for index in range(125):
@@ -78,12 +79,7 @@ class SimulatorControls(QGroupBox):
             button.setIcon(wave_icon(kind))
             button.setIconSize(QSize(68, 24))
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            button.setStyleSheet("""
-                QToolButton { background: #263442; color: #e8eff5; border: 1px solid #526474;
-                              border-radius: 5px; padding: 3px; }
-                QToolButton:checked { background: #174941; border: 2px solid #61dbbb; padding: 2px; }
-                QToolButton:disabled { background: #374047; color: #b3bbc0; }
-            """)
+            button.setObjectName("waveButton")
             self.wave_buttons.addButton(button, index)
             grid.addWidget(button, index // 3, index % 3)
         self.wave_buttons.button(0).setChecked(True)
@@ -114,6 +110,10 @@ class SimulatorControls(QGroupBox):
         for spin in (self.frequency, self.amplitude, self.frequency_2, self.amplitude_2, self.offset, self.noise, self.duty):
             spin.valueChanged.connect(self._emit_settings)
         self._emit_settings()
+
+    def _scope_v4_refresh(self):
+        for index, (_, kind) in enumerate(WAVES):
+            self.wave_buttons.button(index).setIcon(wave_icon(kind))
 
     @staticmethod
     def _spin(minimum, maximum, initial, step, suffix, decimals):

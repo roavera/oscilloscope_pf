@@ -11,16 +11,7 @@ class SectionResetButton(QToolButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(description)
         self.setAccessibleName(description)
-        self.setStyleSheet("""
-            QToolButton {
-                color:#aeb9c8;background:rgba(105,120,140,25);
-                border:1px solid rgba(135,150,170,85);border-radius:5px;
-                padding:0;font-size:19px;font-weight:normal;
-            }
-            QToolButton:hover {background:rgba(128,144,168,65);color:palette(text);}
-            QToolButton:pressed {background:rgba(128,144,168,100);}
-            QToolButton:focus {border:1px solid #8098b8;}
-        """)
+        self.setObjectName("sectionResetButton")
         self.header_label = QLabel(section.title(), section)
         self.header_label.setStyleSheet("font-weight:600;")
         section.setTitle("")
