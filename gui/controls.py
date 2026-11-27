@@ -92,6 +92,34 @@ class OscilloscopeControls(QWidget):
         self.ch2_controls = VerticalControls(channel="CH2")
         self.horizontal_controls = HorizontalControls()
         self.trigger_controls = TriggerControls()
+
+        # SINGLE_PERMANENTE_V1
+        # Reutilizar el botón original: conserva señales, estilo y habilitación.
+        def _layout_of_button(layout, button):
+            for index in range(layout.count()):
+                item = layout.itemAt(index)
+                if item.widget() is button:
+                    return layout
+                if item.layout() is not None:
+                    found = _layout_of_button(item.layout(), button)
+                    if found is not None:
+                        return found
+            return None
+
+        single = self.trigger_controls.single_button
+        source_row = _layout_of_button(self.trigger_controls.layout(), single)
+        acq = self.acquisition_controls
+        target_row = _layout_of_button(acq.layout(), acq.stop_button)
+        if source_row is None or target_row is None:
+            raise RuntimeError("No se encontraron las filas de SINGLE y STOP")
+        if not hasattr(target_row, "insertWidget"):
+            raise RuntimeError("La fila de adquisición no es un QBoxLayout")
+        source_row.removeWidget(single)
+        single.setParent(acq)
+        single.setMinimumHeight(acq.run_button.minimumHeight())
+        target_row.insertWidget(target_row.indexOf(acq.stop_button) + 1, single, 1)
+        # El botón sigue siendo propiedad lógica de TriggerControls.
+        # No llamar show(): Qt lo hará al mostrar la barra de adquisición.
         self.math_controls = MathControls()
         self.filter_controls = FilterControls()
         self.cursor_controls = CursorControls()
