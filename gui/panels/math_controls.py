@@ -1,9 +1,10 @@
 """Controles de una traza MATH con escala y posición independientes."""
 
-from PySide6.QtCore import Signal, QSignalBlocker
+from PySide6.QtCore import Signal, QSignalBlocker, Qt
+# MATH_PANEL_COMPACT_V1
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QLabel, QPushButton, QVBoxLayout,
+    QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QFrame,
 )
 
 
@@ -20,8 +21,33 @@ class MathControls(QGroupBox):
         layout.setContentsMargins(8, 12, 8, 8)
         self.visible_checkbox = QCheckBox("Mostrar MATH")
         self.visible_checkbox.setChecked(False)
+        layout.setSpacing(8)
+        self.visible_checkbox.setText("Activar traza MATH")
         layout.addWidget(self.visible_checkbox)
+        summary = QFrame()
+        summary.setStyleSheet("QFrame#mathSummary { border: none; background: transparent; } QFrame#mathSummary QLabel { background: transparent; border: none; }")
+        summary.setObjectName("mathSummary")
+        summary_layout = QVBoxLayout(summary)
+        summary_layout.setContentsMargins(10, 8, 10, 8)
+        summary_layout.setSpacing(3)
+        self.formula_label = QLabel("MATH = CH1 + CH2")
+        self.formula_label.setWordWrap(True)
+        self.formula_label.setStyleSheet("font-size: 21px; font-weight: 600; background: transparent;")
+        self.formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        summary_layout.addWidget(self.formula_label)
+        self.units_label = QLabel("Escala: unidades de entrada")
+        self.units_label.setWordWrap(True)
+        summary_layout.addWidget(self.units_label)
+        self.status_label = QLabel("MATH oculta")
+        self.status_label.setWordWrap(True)
+        summary_layout.addWidget(self.status_label)
+        layout.addWidget(summary)
+        heading = QLabel("OPERACIÓN")
+        heading.setStyleSheet("font-weight: 600;")
+        layout.addWidget(heading)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setVerticalSpacing(5)
         self.operation_combo = QComboBox()
         self.category_combo = QComboBox()
         self._operation_groups = {
@@ -41,7 +67,18 @@ class MathControls(QGroupBox):
         form.addRow("Grupo:", self.category_combo)
         form.addRow("Operación:", self.operation_combo)
         form.addRow("Fuente A:", self.source_a_combo)
-        form.addRow("Fuente B:", self.source_b_combo)
+        self.source_b_label = QLabel("Fuente B:")
+        form.addRow(self.source_b_label, self.source_b_combo)
+        layout.addLayout(form)
+        self.operation_hint = QLabel()
+        self.operation_hint.setWordWrap(True)
+        layout.addWidget(self.operation_hint)
+        heading = QLabel("VISUALIZACIÓN")
+        heading.setStyleSheet("font-weight: 600;")
+        layout.addWidget(heading)
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setVerticalSpacing(5)
         self._unit_suffix = "u.a."
         self.scale_mode_combo = QComboBox()
         self.scale_mode_combo.addItem("Auto", True)
@@ -62,23 +99,14 @@ class MathControls(QGroupBox):
         self.position_input.setSingleStep(.01)
         self.position_input.setSuffix(" div")
         self.position_input.setKeyboardTracking(False)
-        form.addRow("Posición MATH:", self.position_input)
-        layout.addLayout(form)
-        self.center_button = QPushButton("Centrar MATH")
+        position_row = QHBoxLayout()
+        position_row.addWidget(self.position_input, 1)
+        self.center_button = QPushButton("Centrar")
+        self.center_button.setToolTip("Restablecer la posición vertical de MATH a cero")
         self.center_button.clicked.connect(lambda: self.position_input.setValue(0))
-        layout.addWidget(self.center_button)
-        self.formula_label = QLabel("MATH = CH1 + CH2")
-        self.formula_label.setStyleSheet("color:#c993ff;font-weight:600;")
-        layout.addWidget(self.formula_label)
-        self.units_label = QLabel("Escala: unidades de entrada")
-        self.units_label.setStyleSheet("color:#a8b5c8;font-weight:600;")
-        layout.addWidget(self.units_label)
-        note = QLabel("A/B son canales de entrada. Las funciones unarias utilizan solamente A.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.status_label = QLabel("MATH oculta")
-        self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
+        position_row.addWidget(self.center_button)
+        form.addRow("Posición:", position_row)
+        layout.addLayout(form)
         self.visible_checkbox.toggled.connect(self.visibility_changed.emit)
         self.category_combo.currentIndexChanged.connect(self._on_category_changed)
         self.scale_mode_combo.currentIndexChanged.connect(self._on_scale_mode_changed)
@@ -88,6 +116,26 @@ class MathControls(QGroupBox):
         for combo in (self.operation_combo, self.source_a_combo, self.source_b_combo):
             combo.currentIndexChanged.connect(self._emit_configuration)
         self._reload_operations()
+        self._refresh_operation_ui()
+        # MATH_XY_V1
+        self.setTitle("Matemática")
+        self.visible_checkbox.setText("Mostrar traza MATH")
+        self.formula_label.setWordWrap(True)
+        self.formula_label.setStyleSheet("font-size: 21px; font-weight: 600; background: transparent;")
+        self.units_label.setWordWrap(True)
+        self.status_label.setWordWrap(True)
+
+    def _refresh_operation_ui(self):
+        from types import SimpleNamespace
+        op = self.operation_combo.currentData()
+        if op is None:
+            return
+        unary = op in {"integrate", "derivative", "abs", "sqrt", "log10", "ln", "exp"}
+        self.source_b_combo.setVisible(not unary)
+        self.source_b_label.setVisible(not unary)
+        self.operation_hint.setText("Usa únicamente la fuente A." if unary else "Combina las fuentes A y B.")
+        config = SimpleNamespace(operation=op, source_a=self.source_a_combo.currentData(), source_b=self.source_b_combo.currentData())
+        self.formula_label.setText(f"MATH = {self._expression(config)}")
 
     def _reload_operations(self, *_):
         current = self.operation_combo.currentData()
@@ -165,6 +213,7 @@ class MathControls(QGroupBox):
         del blocker
 
     def _emit_configuration(self, _index=None):
+        self._refresh_operation_ui()
         self.configuration_changed.emit(
             self.operation_combo.currentData(), self.source_a_combo.currentData(),
             self.source_b_combo.currentData(),
@@ -191,6 +240,7 @@ class MathControls(QGroupBox):
             blocker = QSignalBlocker(self.operation_combo)
             self.operation_combo.setCurrentIndex(self.operation_combo.findData(config.operation))
             del blocker
+        self._refresh_operation_ui()
 
     @staticmethod
     def _expression(config):

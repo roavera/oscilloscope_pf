@@ -197,6 +197,7 @@ class DisplayMixin:
 
 
     def update_controls_state(self):
+        self.controls.filter_controls.sync_context(self.sample_rate, self.filter_config)
         self._refresh_measurements()
         features = []
         math_on = bool(getattr(self.plot, "math_visible", False))

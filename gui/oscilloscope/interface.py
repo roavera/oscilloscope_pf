@@ -98,6 +98,8 @@ class InterfaceMixin:
         self.controls.autostore_toggled.connect(self.set_autostore_enabled)
         self.controls.erase_requested.connect(self.erase_autostore)
         math_controls = self.controls.math_controls
+        from gui.panels.xy_controls import install_xy
+        install_xy(self)  # MATH_XY_V1
         math_controls.configuration_changed.connect(self.set_math_configuration)
         math_controls.visibility_changed.connect(self.set_math_visible)
         math_controls.scale_changed.connect(lambda value: self.plot.set_math_settings(scale=value))
@@ -125,6 +127,12 @@ class InterfaceMixin:
         self.cursor_controls.channel_changed.connect(self.plot.set_cursor_channel)
         self.cursor_controls.labels_visible_changed.connect(self.plot.set_cursor_labels_visible)
         self.plot.cursor_readout_changed.connect(self.cursor_controls.set_readout)
+        self.plot.cursor_data_changed.connect(self.cursor_controls.set_cursor_data)
+        self.cursor_controls.second_channel_changed.connect(self.plot.set_cursor_second_channel)
+        self.cursor_controls.linked_changed.connect(self.plot.set_cursor_linked)
+        self.cursor_controls.snap_changed.connect(self.plot.set_cursor_snap)
+        self.cursor_controls.reset_requested.connect(self.plot.reset_cursor_positions)
+        self.cursor_controls.position_changed.connect(self.plot.set_cursor_fraction)
         self.controls.ch2_controls.volts_per_division_changed.connect(self.set_ch2_volts_per_division)
         self.controls.ch2_controls.volts_per_division_changed.connect(
             lambda _value: self.sync_math_scale()

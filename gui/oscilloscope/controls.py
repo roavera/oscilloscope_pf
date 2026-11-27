@@ -56,6 +56,8 @@ class ControlsMixin:
         self.reset_vertical_controls(1)
         self.reset_vertical_controls(2)
         self.reset_math_controls()
+        if hasattr(self, "xy_panel"):
+            self.xy_panel.activate(False)  # MATH_XY_V1
         self.controls.filter_controls.reset()
         self.filter_config = FilterConfig()
         self.plot.set_cursor_mode("Off")

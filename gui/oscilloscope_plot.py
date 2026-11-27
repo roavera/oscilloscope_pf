@@ -133,6 +133,7 @@ class OscilloscopePlot(QWidget):
     horizontal_position_changed = Signal(float)
     vertical_position_changed = Signal(float)
     cursor_readout_changed = Signal(str)
+    cursor_data_changed = Signal(object)
     ch2_position_changed = Signal(float)
     math_position_changed = Signal(float)
 
@@ -1206,7 +1207,7 @@ class OscilloscopePlot(QWidget):
             line.setZValue(25)
             line.setToolTip(f'Cursor {index + 1}: arrastrá para medir')
             self.plot_widget.addItem(line, ignoreBounds=True)
-            line.sigPositionChanged.connect(self._refresh_cursors)
+            line.sigPositionChanged.connect(lambda *_args, i=index: self._cursor_moved(i))
             self.cursor_lines.append(line)
         self.cursor_points = []
         for color in colors:
@@ -1252,120 +1253,158 @@ class OscilloscopePlot(QWidget):
             self._cursor_initialized = False
         self._refresh_cursors()
 
+    # CURSORES_COMPACTOS_V1
+    def set_cursor_second_channel(self, channel):
+        self._cursor_second_channel = int(channel)
+        self._refresh_cursors()
+
+    def set_cursor_linked(self, enabled):
+        self._cursor_linked = bool(enabled)
+
+    def set_cursor_snap(self, enabled):
+        self._cursor_snap = bool(enabled)
+        self._refresh_cursors()
+
+    def reset_cursor_positions(self):
+        self._cursor_initialized = False
+        self._refresh_cursors()
+
+    def _cursor_limits(self):
+        voltage = self.cursor_mode == 'Manual' and self.cursor_orientation == 'Tensión'
+        return self.plot_widget.getViewBox().viewRange()[1 if voltage else 0]
+
+    def set_cursor_fraction(self, index, fraction):
+        if self.cursor_mode == 'Off':
+            return
+        lo, hi = self._cursor_limits()
+        self.cursor_lines[index].setValue(lo + float(np.clip(fraction, 0, 1))*(hi-lo))
+
+    def _cursor_moved(self, index):
+        if self._cursor_updating:
+            return
+        if getattr(self, '_cursor_linked', False) and self.cursor_mode != 'Off':
+            old = getattr(self, '_cursor_last_values', None)
+            if old is not None:
+                lo, hi = self._cursor_limits()
+                delta = float(self.cursor_lines[index].value()) - old[index]
+                delta = float(np.clip(delta, lo-min(old), hi-max(old))) if lo-min(old) <= hi-max(old) else 0.0
+                self._cursor_updating = True
+                try:
+                    for i, line in enumerate(self.cursor_lines):
+                        line.setValue(old[i]+delta)
+                finally:
+                    self._cursor_updating = False
+        self._refresh_cursors()
+
+    @staticmethod
+    def _cursor_format(value, unit):
+        if value is None or not np.isfinite(value):
+            return '—'
+        magnitude = abs(value)
+        if unit in ('s', 'V', 'Hz') and magnitude:
+            for scale, prefix in ((1e9,'G'),(1e6,'M'),(1e3,'k'),(1,''),(1e-3,'m'),(1e-6,'µ'),(1e-9,'n')):
+                if magnitude >= scale:
+                    return f'{value/scale:.5g} {prefix}{unit}'
+        return f'{value:.5g} {unit}'
+
+    def _cursor_trace(self, channel):
+        if channel == 3:
+            x = self._math_x
+            y = self._math_values
+            return x, y, self.math_unit, 'MATH'
+        x = self._cursor_signal_x
+        raw = self._raw_channels
+        y = raw[:, channel-1] if raw is not None and raw.ndim == 2 and raw.shape[1] >= channel else None
+        return x, y, 'V' if self.voltage_units else 'u.a.', f'CH{channel}'
+
     def _refresh_cursors(self, *args):
         if self._cursor_updating or not hasattr(self, 'cursor_lines'):
             return
         self._cursor_updating = True
         try:
             mode = self.cursor_mode
-            channel = self.cursor_channel
-            is_voltage = mode == 'Manual' and self.cursor_orientation == 'Tensión'
+            ch = self.cursor_channel
+            voltage = mode == 'Manual' and self.cursor_orientation == 'Tensión'
             xmin, xmax = self.plot_widget.getViewBox().viewRange()[0]
             ymin, ymax = self.plot_widget.getViewBox().viewRange()[1]
-            # Rotar antes de ubicar: InfiniteLine cambia su coordenada activa.
+            lo, hi = (ymin,ymax) if voltage else (xmin,xmax)
             for line in self.cursor_lines:
-                line.setAngle(0 if is_voltage else 90)
+                line.setAngle(0 if voltage else 90)
             if not self._cursor_initialized and mode != 'Off':
-                for i, line in enumerate(self.cursor_lines):
-                    fraction = self._cursor_positions[i]
-                    line.setValue(ymin + fraction * (ymax-ymin) if is_voltage
-                                  else xmin + fraction * (xmax-xmin))
+                for i,line in enumerate(self.cursor_lines):
+                    line.setValue(lo + self._cursor_positions[i]*(hi-lo))
                 self._cursor_initialized = True
-            values = []
-            track_samples = [None, None]
-            texts = []
-            for i, line in enumerate(self.cursor_lines):
+            values, samples, units, cards, ys = [], [], [], [], []
+            fmt = self._cursor_format
+            second = getattr(self, '_cursor_second_channel', 0) or ch
+            for i,line in enumerate(self.cursor_lines):
+                source = second if i == 1 and mode == 'Track' else ch
+                v = float(np.clip(line.value(),lo,hi))
+                x,y,unit,name = self._cursor_trace(source)
+                sample, yd = None, None
+                if mode == 'Track' and x is not None and y is not None and len(x)>=2 and len(x)==len(y) and x[0]<=v<=x[-1]:
+                    if getattr(self,'_cursor_snap',False) and not getattr(self,'_cursor_linked',False):
+                        j = int(np.argmin(np.abs(x-v)))
+                        if lo <= x[j] <= hi:
+                            v = float(x[j])
+                    sample = float(np.interp(v,x,y))
+                    if np.isfinite(sample):
+                        yd = sample/self.math_scale+self.math_position if source==3 else float(self._to_display(sample,source))
+                    else:
+                        sample = None
+                if float(line.value()) != v:
+                    line.setValue(v)
                 line.setVisible(mode != 'Off')
-                lo, hi = (ymin, ymax) if is_voltage else (xmin, xmax)
-                value = float(np.clip(line.value(), lo, hi))
-                if abs(value - float(line.value())) > 1e-12:
-                    line.setValue(value)
-                values.append(value)
-                self.cursor_points[i].setVisible(mode == 'Track')
-                texts.append(f'C{i+1} · t={value:.6g} s')
-            if mode == 'Off':
-                result = 'Cursores desactivados'
-            elif is_voltage:
-                if channel == 3:
-                    unit = self.math_unit
-                    name = "MATH"
-                    a, b = [(v - self.math_position) * self.math_scale for v in values]
+                point = self.cursor_points[i]
+                point.setVisible(mode == 'Track' and yd is not None)
+                if yd is not None:
+                    point.setData([v],[yd])
                 else:
-                    unit = "V" if self.voltage_units else "u.a."
-                    name = f"CH{channel}"
-                    a, b = [float(self._from_display(v, channel)) for v in values]
-                result = (f'{name} · C1: {a:+.6g} {unit}    C2: {b:+.6g} {unit}\n'
-                          f'Δ: {b-a:+.6g} {unit}  |Δ|: {abs(b-a):.6g} {unit}')
-                texts = [f'C{i+1} · {name}: {v:+.6g} {unit}' for i, v in enumerate((a, b))]
-            elif mode == 'Manual':
-                a, b = values
-                dt = b-a
-                result = (f'C1: {a:.6g} s    C2: {b:.6g} s\n'
-                          f'Δt: {dt:+.6g} s  |Δt|: {abs(dt):.6g} s')
-                if abs(dt) > 1e-15:
-                    result += f'    1/|Δt|: {1/abs(dt):.6g} Hz'
-            else:
-                if channel == 3:
-                    x = self._math_x
-                    y = (self._math_values if self._math_values is not None
-                         else np.array([], dtype=float))
-                    name = "MATH"
-                    unit = self.math_unit
-                    has_envelope = self._math_bounds is not None
+                    point.setData([],[])
+                if voltage:
+                    sample = (v-self.math_position)*self.math_scale if source==3 else float(self._from_display(v,source))
+                    card = f'{name}\n{fmt(sample,unit)}'
+                elif mode == 'Track':
+                    card = f'{name} · {fmt(v,"s")}\n{fmt(sample,unit)}'
                 else:
-                    x = self._cursor_signal_x
-                    y = (self._raw_channels[:, channel-1] if self._raw_channels is not None
-                         else np.array([], dtype=float))
-                    name = f"CH{channel}"
-                    unit = "V" if self.voltage_units else "u.a."
-                    has_envelope = self._raw_envelope is not None
-                if x.size < 2 or y.size != x.size:
-                    result = (f'Track no disponible en {name}: hay dos límites por intervalo'
-                              if has_envelope else f'Track: esperando muestras de {name}')
-                    for point in self.cursor_points:
-                        point.setData([], [])
-                else:
-                    for i, t in enumerate(values):
-                        if x[0] <= t <= x[-1]:
-                            v = float(np.interp(t, x, y))
-                            if not np.isfinite(v):
-                                self.cursor_points[i].setData([], [])
-                                texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\nIndefinido'
-                                continue
-                            y_display = (v / self.math_scale + self.math_position
-                                         if channel == 3 else float(self._to_display(v, channel)))
-                            self.cursor_points[i].setData([t], [y_display])
-                            track_samples[i] = v
-                            texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\n{unit}: {v:+.6g}'
-                        else:
-                            self.cursor_points[i].setData([], [])
-                            texts[i] = f'C{i+1} · {name}\nt={t:.6g} s\nFuera de captura'
-                    if all(v is not None for v in track_samples):
-                        a, b = values
-                        va, vb = track_samples
-                        result = (f'{name} · C1: t={a:.6g} s, {unit}={va:+.6g}\n'
-                                  f'C2: t={b:.6g} s, {unit}={vb:+.6g}\n'
-                                  f'Δt={b-a:+.6g} s   Δ={vb-va:+.6g} {unit}')
-                    else:
-                        result = 'Track: cursor sin muestra válida'
-            for i, label in enumerate(self.cursor_labels):
+                    card = fmt(v,'s')
+                values.append(v); samples.append(sample); units.append(unit); cards.append(card); ys.append(yd)
+                label = self.cursor_labels[i]
                 label.setVisible(mode != 'Off' and self.cursor_labels_visible)
-                label.setText(texts[i])
-                if is_voltage:
-                    label.setAnchor((0, 1 if values[i] < ymax-.5 else 0))
-                    label.setPos(xmin+.025*(xmax-xmin), values[i])
+                label.setText(f'C{i+1} · {card}')
+                if voltage:
+                    label.setAnchor((0,1 if v < ymax-.5 else 0))
+                    label.setPos(xmin+.025*(xmax-xmin),v)
                 else:
-                    right = values[i] > (xmin+xmax)/2
-                    label.setAnchor((1 if right else 0, 0))
-                    x_label = values[i] + (-.012 if right else .012)*(xmax-xmin)
-                    if mode == 'Track' and track_samples[i] is not None:
-                        y_display = (track_samples[i] / self.math_scale + self.math_position
-                                     if channel == 3 else float(self._to_display(track_samples[i], channel)))
-                        y_label = float(np.clip(y_display+.65, ymin+.9, ymax-.65))
-                    else:
-                        y_label = ymax-.7-.45*i
-                    label.setPos(x_label, y_label)
+                    right = v > (xmin+xmax)/2
+                    label.setAnchor((1 if right else 0,0))
+                    label.setPos(v+(-.012 if right else .012)*(xmax-xmin),float(np.clip(yd+.65,ymin+.9,ymax-.65)) if yd is not None else ymax-.7-.45*i)
+            self._cursor_last_values = values[:]
+            dt = values[1]-values[0]
+            results = []
+            if mode != 'Off' and not voltage:
+                results.append(f'Δt: {fmt(dt,"s")}')
+                results.append(f'1/|Δt|: {fmt(1/abs(dt) if abs(dt)>1e-15 else None,"Hz")}')
+            if mode != 'Off' and (voltage or mode=='Track') and all(v is not None for v in samples):
+                if units[0]==units[1]:
+                    dv = samples[1]-samples[0]
+                    results.append(f'ΔY: {fmt(dv,units[0])}')
+                    if mode=='Track' and second==ch and abs(dt)>1e-15:
+                        results.append(f'Pendiente: {fmt(dv/dt,units[0]+"/s")}')
+                else:
+                    results.append('ΔY no disponible: unidades distintas')
+            status = 'Arrastrá los cursores o ajustá su posición en % del área visible.'
+            if mode=='Off':
+                status = 'Cursores desactivados'
+            elif mode=='Track' and any(v is None for v in samples):
+                status = 'Track: faltan muestras válidas en uno o ambos cursores.'
+            elif mode=='Track' and getattr(self,'_cursor_snap',False) and getattr(self,'_cursor_linked',False):
+                status = 'Ajuste a muestras suspendido al vincular cursores.'
+            elif mode=='Track':
+                status = 'Muestras reales' if getattr(self,'_cursor_snap',False) else 'Track: interpolación lineal entre muestras adquiridas.'
+            result = '\n'.join(results) or '—'
             self.cursor_readout_changed.emit(result)
+            self.cursor_data_changed.emit(dict(cards=cards,positions=[(v-lo)/(hi-lo) if hi>lo else 0 for v in values],result=result,status=status))
         finally:
             self._cursor_updating = False
 

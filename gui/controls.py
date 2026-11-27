@@ -156,7 +156,7 @@ class OscilloscopeControls(QWidget):
             ("controls", "CONTROLES"),
             ("measurements", "MEDICIONES"),
             ("cursors", "CURSORES"),
-            ("math", "MATH"),
+            ("math", "MATH / XY"),
             ("filters", "FILTROS"),
             ("simulator", "Generador de funciones"),
         ):
