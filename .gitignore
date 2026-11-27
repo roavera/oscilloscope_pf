@@ -50,3 +50,13 @@ temp/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Archivos de respaldo de scripts de modificación
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+*.orig
+*~
+backups/
+.backups/
